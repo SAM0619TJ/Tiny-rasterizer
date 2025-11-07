@@ -30,6 +30,13 @@ void Window::setupWindow(int width, int height, const std::string& title) {
 
     // 初始化GLEW
     initGLEW();
+    
+    // 设置视口
+    glViewport(0, 0, width, height);
+    
+    // 打印 OpenGL 信息
+    std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
+    std::cout << "GLSL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
 
     initialized = true;
 }

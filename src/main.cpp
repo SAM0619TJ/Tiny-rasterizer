@@ -19,8 +19,6 @@ int main()
         std::cout << "Shaders loaded successfully." << std::endl;
         shader.setupQuad();
 
-    try {
-
         // 主循环
         while (!window.shouldClose()) {
             // 清除颜色缓冲
@@ -49,18 +47,15 @@ int main()
             window.swapBuffers();
             window.pollEvents();
         }
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-    }
 
-    // Window的析构函数会自动清理窗口资源
-    // Shader的析构函数会自动清理VAO和VBO
-    Window::terminateGLFW();
-    return 0;
+        // Window的析构函数会自动清理窗口资源
+        // Shader的析构函数会自动清理VAO和VBO
+        Window::terminateGLFW();
+        return 0;
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
+        Window::terminateGLFW();
         return -1;
     }
 }

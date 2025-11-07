@@ -65,9 +65,18 @@ GLuint Shader::compileShader(GLenum type, const std::string& source) {
 std::string Shader::readFile(const std::string& path) {
     std::ifstream file;
     file.open(path);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open shader file: " + path);
+    }
     std::stringstream buffer;
     buffer << file.rdbuf();
-    return buffer.str();
+    file.close();
+    std::string content = buffer.str();
+    if (content.empty()) {
+        throw std::runtime_error("Shader file is empty: " + path);
+    }
+    std::cout << "Read shader file: " << path << " (" << content.length() << " bytes)" << std::endl;
+    return content;
 }
 
 void Shader::checkCompileErrors(GLuint shader, const std::string& type) {
@@ -146,7 +155,9 @@ void Shader::setupQuad() {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // 解绑VAO和VBO
-    glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    std::cout << "VAO: " << vao << ", VBO: " << vbo << std::endl;
+    
+    // 不要解绑VAO，保持绑定状态用于渲染
+    // glBindVertexArray(0);
+    // glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
