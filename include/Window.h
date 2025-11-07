@@ -27,6 +27,9 @@ public:
     void getFramebufferSize(int& width, int& height) const;
     void getCursorPos(double& xpos, double& ypos) const;
     GLFWwindow* getGLFWwindow() const { return window; }
+    
+    // 设置窗口标题
+    void setTitle(const std::string& title);
 
     // 静态方法
     static void initGLFW();

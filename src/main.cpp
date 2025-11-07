@@ -1,6 +1,8 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <sstream>
+#include <iomanip>
 #include "Shader.h"
 #include "Window.h"
 
@@ -18,6 +20,18 @@ int main()
         Shader shader("shaders/vertex.glsl", "shaders/rotation_matrix.glsl", true);
         std::cout << "Shaders loaded successfully." << std::endl;
         shader.setupQuad();
+        
+        std::cout << "GPU acceleration enabled. Starting render loop...\n" << std::endl;
+
+        // FPS 计数器变量
+        double lastTime = glfwGetTime();
+        double lastFrameTime = lastTime;
+        int frameCount = 0;
+        double fpsUpdateInterval = 0.5; // 每0.5秒更新一次FPS显示
+        
+        // 性能统计
+        double minFrameTime = 999999.0;
+        double maxFrameTime = 0.0;
 
         // 主循环
         while (!window.shouldClose()) {
@@ -46,6 +60,49 @@ int main()
             // 交换缓冲并处理事件
             window.swapBuffers();
             window.pollEvents();
+
+            // 计算并更新FPS
+            frameCount++;
+            double currentFrameTime = glfwGetTime();
+            double totalDeltaTime = currentFrameTime - lastTime;
+            double frameDeltaTime = currentFrameTime - lastFrameTime;
+            
+            // 每帧计算帧时间用于统计（毫秒）
+            if (frameCount > 1) {  // 跳过第一帧
+                double singleFrameMs = frameDeltaTime * 1000.0;
+                if (singleFrameMs < minFrameTime) minFrameTime = singleFrameMs;
+                if (singleFrameMs > maxFrameTime) maxFrameTime = singleFrameMs;
+            }
+            
+            lastFrameTime = currentFrameTime;
+            
+            // 定期更新FPS显示
+            if (totalDeltaTime >= fpsUpdateInterval) {
+                double fps = frameCount / totalDeltaTime;
+                double avgMs = (totalDeltaTime * 1000.0) / frameCount;
+                
+                std::ostringstream title;
+                title << "Tiny Rasterizer [GPU] | FPS: " << std::fixed << std::setprecision(1) 
+                      << fps << " | Avg: " << std::setprecision(2) << avgMs << "ms";
+                
+                // 只有当有有效数据时才显示最小/最大值
+                if (minFrameTime < 999999.0 && maxFrameTime > 0.0) {
+                    title << " | Min: " << std::setprecision(0) << (1000.0 / maxFrameTime) << "fps"
+                          << " | Max: " << std::setprecision(0) << (1000.0 / minFrameTime) << "fps";
+                }
+                
+                window.setTitle(title.str());
+                
+                // 调试输出到终端
+                // std::cout << "FPS: " << std::fixed << std::setprecision(1) << fps 
+                //           << " | Avg: " << std::setprecision(2) << avgMs << "ms" << std::endl;
+                
+                // 重置计数器
+                frameCount = 0;
+                lastTime = currentFrameTime;
+                minFrameTime = 999999.0;
+                maxFrameTime = 0.0;
+            }
         }
 
         // Window的析构函数会自动清理窗口资源
