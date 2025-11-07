@@ -12,7 +12,7 @@ vec3 palette(float d){
 }
 vec2 rotate(vec2 p, float a){
     float c = cos(a), s = sin(a);
-    return p * mat2(c, s, -s, c);
+    return p * mat2(c, -s, s, c);  // 正确的逆时针旋转矩阵（列主序）
 }
 float map(vec3 p){
     for(int i=0; i<8; ++i){
