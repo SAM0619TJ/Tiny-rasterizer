@@ -5,29 +5,53 @@
 #include <iomanip>
 #include "Shader.h"
 #include "Window.h"
+#include "Config.h"
 
 int main() 
 {
     try {
+        // 加载配置文件
+        std::cout << "Loading configuration..." << std::endl;
+        Config config("config/shader_config.yaml");
+        
+        // 获取配置
+        const auto& windowConfig = config.getWindowConfig();
+        const auto& perfConfig = config.getPerformanceConfig();
+        const auto& gpuConfig = config.getGPUConfig();
+        ShaderScene activeScene = config.getActiveScene();
+        
+        std::cout << "\n=== 配置信息 ===" << std::endl;
+        std::cout << "场景: " << activeScene.name << std::endl;
+        std::cout << "描述: " << activeScene.description << std::endl;
+        std::cout << "顶点着色器: " << activeScene.vertexShader << std::endl;
+        std::cout << "片段着色器: " << activeScene.fragmentShader << std::endl;
+        std::cout << "窗口大小: " << windowConfig.width << "x" << windowConfig.height << std::endl;
+        std::cout << "VSync: " << (windowConfig.vsync ? "开启" : "关闭") << std::endl;
+        std::cout << "OpenGL: " << gpuConfig.openglMajor << "." << gpuConfig.openglMinor << std::endl;
+        std::cout << "=================\n" << std::endl;
+        
         // 初始化GLFW
         Window::initGLFW();
+        
+        // 设置GPU配置
+        Window::setGPUConfig(gpuConfig);
 
-        // 创建窗口
-        Window window(800, 600, "Tiny Rasterizer");
+        // 创建窗口（使用配置）
+        Window window(windowConfig);
 
-        // 创建着色器程序并设置顶点数据
+        // 创建着色器程序（使用配置的shader路径）
         std::cout << "Loading shaders..." << std::endl;
-        Shader shader("shaders/vertex.glsl", "shaders/rotation_matrix.glsl", true);
+        Shader shader(activeScene.vertexShader, activeScene.fragmentShader, true);
         std::cout << "Shaders loaded successfully." << std::endl;
         shader.setupQuad();
         
         std::cout << "GPU acceleration enabled. Starting render loop...\n" << std::endl;
 
-        // FPS 计数器变量
+        // FPS 计数器变量（使用配置的更新间隔）
         double lastTime = glfwGetTime();
         double lastFrameTime = lastTime;
         int frameCount = 0;
-        double fpsUpdateInterval = 0.5; // 每0.5秒更新一次FPS显示
+        double fpsUpdateInterval = perfConfig.fpsUpdateInterval;
         
         // 性能统计
         double minFrameTime = 999999.0;
@@ -81,21 +105,26 @@ int main()
                 double fps = frameCount / totalDeltaTime;
                 double avgMs = (totalDeltaTime * 1000.0) / frameCount;
                 
-                std::ostringstream title;
-                title << "Tiny Rasterizer [GPU] | FPS: " << std::fixed << std::setprecision(1) 
-                      << fps << " | Avg: " << std::setprecision(2) << avgMs << "ms";
-                
-                // 只有当有有效数据时才显示最小/最大值
-                if (minFrameTime < 999999.0 && maxFrameTime > 0.0) {
-                    title << " | Min: " << std::setprecision(0) << (1000.0 / maxFrameTime) << "fps"
-                          << " | Max: " << std::setprecision(0) << (1000.0 / minFrameTime) << "fps";
+                // 根据配置决定是否更新窗口标题
+                if (perfConfig.showTitleFps) {
+                    std::ostringstream title;
+                    title << windowConfig.title << " [GPU] | FPS: " << std::fixed << std::setprecision(1) 
+                          << fps << " | Avg: " << std::setprecision(2) << avgMs << "ms";
+                    
+                    // 只有当有有效数据时才显示最小/最大值
+                    if (minFrameTime < 999999.0 && maxFrameTime > 0.0) {
+                        title << " | Min: " << std::setprecision(0) << (1000.0 / maxFrameTime) << "fps"
+                              << " | Max: " << std::setprecision(0) << (1000.0 / minFrameTime) << "fps";
+                    }
+                    
+                    window.setTitle(title.str());
                 }
                 
-                window.setTitle(title.str());
-                
-                // 调试输出到终端
-                // std::cout << "FPS: " << std::fixed << std::setprecision(1) << fps 
-                //           << " | Avg: " << std::setprecision(2) << avgMs << "ms" << std::endl;
+                // 根据配置决定是否输出到终端
+                if (perfConfig.showConsoleFps) {
+                    std::cout << "FPS: " << std::fixed << std::setprecision(1) << fps 
+                              << " | Avg: " << std::setprecision(2) << avgMs << "ms" << std::endl;
+                }
                 
                 // 重置计数器
                 frameCount = 0;

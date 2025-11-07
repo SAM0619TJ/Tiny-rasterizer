@@ -4,10 +4,12 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <string>
+#include "Config.h"
 
 class Window {
 public:
     Window(int width, int height, const std::string& title);
+    Window(const WindowConfig& config);  // 新增：从配置创建
     ~Window();
 
     // 禁止拷贝
@@ -34,10 +36,12 @@ public:
     // 静态方法
     static void initGLFW();
     static void terminateGLFW();
+    static void setGPUConfig(const GPUConfig& config);  // 新增：设置GPU配置
 
 private:
     GLFWwindow* window;
     bool initialized;
+    static GPUConfig gpuConfig;  // 新增：存储GPU配置
 
     void setupWindow(int width, int height, const std::string& title);
     void initGLEW();

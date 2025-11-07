@@ -1,0 +1,48 @@
+# Tiny Rasterizer Shader Configuration
+# 着色器配置文件
+
+# 当前激活的着色器场景
+# 可以使用场景 key (如: "fractal") 或场景名称 (如: "Fractal Raymarch")
+active_scene: "rotation_matrix"
+
+# 着色器场景配置
+scenes:
+  # 场景1: 旋转矩阵效果
+  rotation_matrix:
+    name: "Rotation Matrix Effect"
+    description: "Box rotation with time-based animation"
+    vertex_shader: "shaders/vertex.glsl"
+    fragment_shader: "shaders/rotation_matrix.glsl"
+    
+  # 场景2: 分形效果
+  fractal:
+    name: "Fractal Raymarch"
+    description: "3D fractal raymarching effect"
+    vertex_shader: "shaders/vertex.glsl"
+    fragment_shader: "shaders/fragment.glsl"
+  
+  # 场景3: 水面效果（如果有的话）
+  water:
+    name: "Water Effect"
+    description: "Water simulation shader"
+    vertex_shader: "shaders/vertex.glsl"
+    fragment_shader: "shaders/water.glsl"
+
+# 窗口配置
+window:
+  width: 1000
+  height: 600
+  title: "Tiny Rasterizer"
+  vsync: false  # true=锁定60fps, false=最大性能
+  
+# 性能配置
+performance:
+  fps_update_interval: 0.5  # FPS更新间隔(秒)
+  show_console_fps: true    # 是否在终端显示FPS
+  show_title_fps: true      # 是否在窗口标题显示FPS
+
+# GPU 配置
+gpu:
+  opengl_major: 4
+  opengl_minor: 1
+  samples: 0  # MSAA采样数，0=禁用

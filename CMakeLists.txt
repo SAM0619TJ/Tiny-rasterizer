@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(OpenGL REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(glfw3 REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # 设置源文件目录
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -42,6 +43,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${OPENGL_LIBRARIES}
     GLEW::GLEW
     glfw
+    yaml-cpp
 )
 
 # 复制着色器文件到构建目录
@@ -50,6 +52,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     ${SHADER_DIR}
     $<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders
     COMMENT "Copying shader files to build directory"
+)
+
+# 复制配置文件到构建目录
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/config
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>/config
+    COMMENT "Copying config files to build directory"
 )
 
 # 设置IDE中的源文件分组

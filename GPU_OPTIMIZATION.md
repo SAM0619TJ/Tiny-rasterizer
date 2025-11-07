@@ -3,6 +3,7 @@
 ## ✅ 已实现的优化
 
 ### 1. GPU 硬件加速
+
 - **当前GPU**: Intel(R) UHD Graphics
 - **OpenGL版本**: 4.1 Core Profile
 - **渲染API**: Direct3D 12 (通过 Mesa)
@@ -11,6 +12,7 @@
 ### 2. 性能优化设置
 
 #### OpenGL 状态优化
+
 ```cpp
 glDisable(GL_DEPTH_TEST);    // 2D渲染不需要深度测试
 glDisable(GL_STENCIL_TEST);  // 不需要模板测试
@@ -19,6 +21,7 @@ glDisable(GL_CULL_FACE);     // 不需要面剔除
 ```
 
 #### 窗口配置优化
+
 - **双缓冲**: 启用（防止画面撕裂）
 - **多重采样**: 禁用（提升性能）
 - **刷新率**: 使用系统最高刷新率
