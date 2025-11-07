@@ -15,7 +15,7 @@ int main()
 
         // 创建着色器程序并设置顶点数据
         std::cout << "Loading shaders..." << std::endl;
-        Shader shader("shaders/vertex.glsl", "shaders/fragment.glsl", true);
+        Shader shader("shaders/vertex.glsl", "shaders/rotation_matrix.glsl", true);
         std::cout << "Shaders loaded successfully." << std::endl;
         shader.setupQuad();
 
