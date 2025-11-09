@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(Tiny-rasterizer VERSION 1.0)
 
-# 设置 CMAKE_PREFIX_PATH 以帮助找到 Homebrew 安装的库
-set(CMAKE_PREFIX_PATH "/opt/homebrew")
 
 # 设置C++标准
 set(CMAKE_CXX_STANDARD 17)
@@ -46,8 +44,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${OPENGL_LIBRARIES}
     GLEW::GLEW
     glfw
-    # 指定yaml-cpp库路径 macos的动态库位置
-    /opt/homebrew/lib/libyaml-cpp.dylib
+    yaml-cpp
 )
 
 # 复制着色器文件到构建目录
