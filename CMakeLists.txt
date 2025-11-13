@@ -8,6 +8,7 @@ set(CMAKE_PREFIX_PATH "/opt/homebrew")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(CMAKE_BUILD_TYPE Debug)
 # 查找必要的包
 find_package(OpenGL REQUIRED)
 find_package(GLEW REQUIRED)

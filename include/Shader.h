@@ -3,7 +3,7 @@
 
 #include <GL/glew.h>
 #include <string>
-#include <unordered_map>
+#include <map>
 
 class Shader {
 public:
@@ -35,7 +35,7 @@ private:
     GLuint programID;
     GLuint vao;  // 顶点数组对象
     GLuint vbo;  // 顶点缓冲对象
-    std::unordered_map<std::string, GLint> uniformLocationCache;
+    std::map<std::string, GLint> uniformLocationCache;
 
     // 编译shader
     GLuint compileShader(GLenum type, const std::string& source);
