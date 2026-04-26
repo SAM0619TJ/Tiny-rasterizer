@@ -1,12 +1,14 @@
-#version 330 core
+#version 450 core
 
-uniform float iTime;
-uniform vec2  iResolution;
-uniform vec2  iMouse;
+layout(set = 0, binding = 0) uniform FrameUniforms {
+    float iTime;
+    vec2 iResolution;
+    vec2 iMouse;
+};
 
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;
 
-// ===== 以下与原 Shadertoy 完全一致，仅最后 main() 做了 OpenGL 适配 =====
+// ===== 以下与原 Shadertoy 基本一致，仅入口与 Vulkan uniform/output 做了适配 =====
 
 const int NUM_STEPS = 32;
 const float PI      = 3.141592;

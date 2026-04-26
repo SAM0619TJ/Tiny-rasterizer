@@ -1,15 +1,15 @@
-#version 330 core
+#version 450 core
 
-uniform float iTime;
-uniform vec2 iResolution;
+layout(set = 0, binding = 0) uniform FrameUniforms {
+    float iTime;
+    vec2 iResolution;
+    vec2 iMouse;
+};
 
-out vec4 FragColor;
+layout(location = 0) out vec4 FragColor;
 
 #define fragColor FragColor
 #define fragCoord gl_FragCoord
-
-// 你的代码从这里开始
-precision highp float;
 
 float gTime = 0.;
 const float REPEAT = 5.0;

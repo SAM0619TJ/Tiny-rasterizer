@@ -1,10 +1,12 @@
+#version 450 core
 
-#version 330 core
+layout(set = 0, binding = 0) uniform FrameUniforms {
+    float iTime;
+    vec2 iResolution;
+    vec2 iMouse;
+};
 
-uniform float iTime;
-uniform vec2  iResolution;
-
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;
 
 // ---------- 原着色器，变量名/入口已改 ----------
 vec3 palette(float d){
