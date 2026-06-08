@@ -46,3 +46,16 @@ gpu:
   opengl_major: 4
   opengl_minor: 1
   samples: 0  # MSAA采样数，0=禁用
+
+# 着色器加载配置（双路径 + 热重载）
+shader:
+  runtime_compile: false   # true=运行时用 glslc 编译 GLSL（开发模式），false=加载离线 SPIR-V
+  hot_reload: false        # true=检测源文件改动后自动重建管线（开发模式）
+  spirv_dir: "shaders_spirv"  # 离线 SPIR-V 目录（相对可执行文件）
+
+# 后处理配置（离屏渲染 + 全屏合成；运行时按 P 键开关）
+post_processing:
+  enabled: true     # 是否启用后处理效果（关闭则直通离屏画面）
+  exposure: 1.05    # 曝光倍数
+  vignette: 0.35    # 暗角强度
+  grain: 0.05       # 颗粒强度

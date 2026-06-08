@@ -10,6 +10,8 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -56,6 +58,7 @@ int runApplication() {
   const ShaderScene activeScene = config.getActiveScene();
   const WindowConfig &windowConfig = config.getWindowConfig();
   const PerformanceConfig &perfConfig = config.getPerformanceConfig();
+  const ShaderConfig &shaderConfig = config.getShaderConfig();
   printStartupSummary(activeScene, windowConfig);
 
   if (isHeadlessTestRun()) {
@@ -69,7 +72,28 @@ int runApplication() {
   {
     Window window(windowConfig);
     VulkanRenderer renderer;
+    renderer.setShaderOptions(shaderConfig.runtimeCompile,
+                              shaderConfig.hotReload, shaderConfig.spirvDir);
     renderer.init(window, activeScene, windowConfig);
+
+    // 收集场景列表，支持运行时用数字键 1..N 切换
+    std::vector<std::pair<std::string, ShaderScene>> sceneList;
+    for (const auto &entry : config.getAllScenes()) {
+      sceneList.emplace_back(entry.first, entry.second);
+    }
+    std::vector<char> sceneKeyDown(sceneList.size(), 0);
+
+    std::cout << "[input] 按数字键切换场景:";
+    for (size_t i = 0; i < sceneList.size() && i < 9; ++i) {
+      std::cout << " [" << (i + 1) << "]=" << sceneList[i].first;
+    }
+    std::cout << std::endl;
+    if (shaderConfig.hotReload) {
+      std::cout << "[shader] 热重载已启用 ("
+                << (shaderConfig.runtimeCompile ? "监视 GLSL 源"
+                                                : "监视 SPIR-V 输出")
+                << ")" << std::endl;
+    }
 
     std::cout << "[frame] Starting render loop..." << std::endl;
 
@@ -98,6 +122,18 @@ int runApplication() {
         lastWidth = width;
         lastHeight = height;
       }
+
+      for (size_t i = 0; i < sceneList.size() && i < 9; ++i) {
+        const bool down = window.getKey(GLFW_KEY_1 + static_cast<int>(i));
+        if (down && !sceneKeyDown[i]) {
+          renderer.setScene(sceneList[i].second);
+          std::cout << "[scene] -> " << sceneList[i].first << " ("
+                    << sceneList[i].second.name << ")" << std::endl;
+        }
+        sceneKeyDown[i] = down ? 1 : 0;
+      }
+
+      renderer.pollShaderReload();
 
       double mouseX = 0.0;
       double mouseY = 0.0;

@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include "ShaderManager.h"
 #include "Window.h"
 
 #include <GLFW/glfw3.h>
@@ -11,7 +12,6 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -282,34 +282,24 @@ struct FrameUniforms {
   float pad1[2] = {0.0f, 0.0f};
 };
 
+// composite.glsl PostParams UBO（std140）
+struct PostParams {
+  float iTime = 0.0f;
+  float enabled = 1.0f;
+  float iResolution[2] = {0.0f, 0.0f};
+  float exposure = 1.0f;
+  float vignette = 0.3f;
+  float grain = 0.05f;
+  float pad = 0.0f;
+};
+
+constexpr int kGrainTextureSize = 256;
+constexpr const char *kCompositeFragmentGlsl = "shaders/composite.glsl";
+
 // 覆盖整个 NDC 的全屏四边形（两个三角形，逆时针）
 const std::array<float, 12> kFullscreenQuad = {
     -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f,
     -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
-
-std::vector<char> readBinaryFile(const std::string &path) {
-  std::ifstream file(path, std::ios::ate | std::ios::binary);
-  if (!file.is_open()) {
-    throw std::runtime_error("Failed to open SPIR-V file: " + path);
-  }
-  const auto size = static_cast<size_t>(file.tellg());
-  std::vector<char> buffer(size);
-  file.seekg(0);
-  file.read(buffer.data(), static_cast<std::streamsize>(size));
-  return buffer;
-}
-
-// 将场景里的 GLSL 路径映射到构建期生成的 SPIR-V 路径
-// 例如 shaders/rotation_matrix.glsl -> shaders_spirv/rotation_matrix.spv
-std::string deriveSpirvPath(const std::string &glslPath) {
-  const size_t slash = glslPath.find_last_of("/\\");
-  const std::string fileName =
-      slash == std::string::npos ? glslPath : glslPath.substr(slash + 1);
-  const size_t dot = fileName.find_last_of('.');
-  const std::string stem =
-      dot == std::string::npos ? fileName : fileName.substr(0, dot);
-  return "shaders_spirv/" + stem + ".spv";
-}
 
 } // namespace
 
@@ -336,8 +326,13 @@ struct VulkanRenderer::Impl {
   VkBuffer vertexBuffer = VK_NULL_HANDLE;
   VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
   VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
-  std::string vertexShaderPath;
-  std::string fragmentShaderPath;
+
+  ShaderManager shaderManager;
+  std::string vertexGlslPath;
+  std::string fragmentGlslPath;
+  std::string spirvDir = "shaders_spirv";
+  bool shaderRuntimeCompile = false;
+  bool shaderHotReload = false;
 
   struct FrameSync {
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
@@ -371,7 +366,9 @@ struct VulkanRenderer::Impl {
     createFramebuffers();
     createCommandPool();
     createCommandBuffers();
+    shaderManager.init(device, shaderRuntimeCompile, spirvDir);
     createDescriptorSetLayout();
+    createPipelineLayout();
     createGraphicsPipeline();
     createVertexBuffer();
     createUniformBuffers();
@@ -379,6 +376,43 @@ struct VulkanRenderer::Impl {
     createDescriptorSets();
     createSyncObjects();
     initialized = true;
+  }
+
+  void setScene(const std::string &vertexGlsl, const std::string &fragmentGlsl) {
+    vertexGlslPath = vertexGlsl;
+    fragmentGlslPath = fragmentGlsl;
+    if (!initialized) {
+      return;
+    }
+    shaderManager.invalidate(vertexGlslPath);
+    shaderManager.invalidate(fragmentGlslPath);
+    rebuildPipeline();
+    std::cout << "[shader] Scene switched -> " << fragmentGlslPath << std::endl;
+  }
+
+  void pollShaderReload() {
+    if (!initialized || !shaderHotReload) {
+      return;
+    }
+    const bool changed =
+        shaderManager.sourceChanged(vertexGlslPath, ShaderStage::Vertex) ||
+        shaderManager.sourceChanged(fragmentGlslPath, ShaderStage::Fragment);
+    if (!changed) {
+      return;
+    }
+    shaderManager.invalidate(vertexGlslPath);
+    shaderManager.invalidate(fragmentGlslPath);
+    rebuildPipeline();
+    std::cout << "[shader] Hot reloaded -> " << fragmentGlslPath << std::endl;
+  }
+
+  void rebuildPipeline() {
+    vkDeviceWaitIdle(device);
+    if (graphicsPipeline != VK_NULL_HANDLE) {
+      vkDestroyPipeline(device, graphicsPipeline, nullptr);
+      graphicsPipeline = VK_NULL_HANDLE;
+    }
+    createGraphicsPipeline();
   }
 
   void beginFrame(const FrameParams &params) {
@@ -478,6 +512,7 @@ struct VulkanRenderer::Impl {
       if (pipelineLayout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
       }
+      shaderManager.destroy();
       if (descriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
       }
@@ -964,18 +999,6 @@ struct VulkanRenderer::Impl {
             "Failed binding Vulkan buffer memory");
   }
 
-  VkShaderModule createShaderModule(const std::vector<char> &code) const {
-    VkShaderModuleCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.codeSize = code.size();
-    createInfo.pCode = reinterpret_cast<const uint32_t *>(code.data());
-
-    VkShaderModule shaderModule = VK_NULL_HANDLE;
-    checkVk(vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule),
-            "Failed creating Vulkan shader module");
-    return shaderModule;
-  }
-
   void createDescriptorSetLayout() {
     VkDescriptorSetLayoutBinding uboBinding{};
     uboBinding.binding = 0;
@@ -994,11 +1017,21 @@ struct VulkanRenderer::Impl {
             "Failed creating Vulkan descriptor set layout");
   }
 
+  void createPipelineLayout() {
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &descriptorSetLayout;
+    checkVk(vkCreatePipelineLayout(device, &layoutInfo, nullptr,
+                                   &pipelineLayout),
+            "Failed creating Vulkan pipeline layout");
+  }
+
   void createGraphicsPipeline() {
-    const std::vector<char> vertCode = readBinaryFile(vertexShaderPath);
-    const std::vector<char> fragCode = readBinaryFile(fragmentShaderPath);
-    VkShaderModule vertModule = createShaderModule(vertCode);
-    VkShaderModule fragModule = createShaderModule(fragCode);
+    VkShaderModule vertModule =
+        shaderManager.getModule(vertexGlslPath, ShaderStage::Vertex);
+    VkShaderModule fragModule =
+        shaderManager.getModule(fragmentGlslPath, ShaderStage::Fragment);
 
     VkPipelineShaderStageCreateInfo vertStage{};
     vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1085,14 +1118,6 @@ struct VulkanRenderer::Impl {
         static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &descriptorSetLayout;
-    checkVk(vkCreatePipelineLayout(device, &layoutInfo, nullptr,
-                                   &pipelineLayout),
-            "Failed creating Vulkan pipeline layout");
-
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
@@ -1110,9 +1135,6 @@ struct VulkanRenderer::Impl {
 
     const VkResult result = vkCreateGraphicsPipelines(
         device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline);
-
-    vkDestroyShaderModule(device, fragModule, nullptr);
-    vkDestroyShaderModule(device, vertModule, nullptr);
 
     checkVk(result, "Failed creating Vulkan graphics pipeline");
     std::cout << "[vulkan] Graphics pipeline created" << std::endl;
@@ -1377,13 +1399,29 @@ void VulkanRenderer::runHeadlessSmokeTest() {
   vkDestroyInstance(instance, nullptr);
 }
 
+void VulkanRenderer::setShaderOptions(bool runtimeCompile, bool hotReload,
+                                      const std::string &spirvDir) {
+  impl->shaderRuntimeCompile = runtimeCompile;
+  impl->shaderHotReload = hotReload;
+  if (!spirvDir.empty()) {
+    impl->spirvDir = spirvDir;
+  }
+}
+
+void VulkanRenderer::setScene(const ShaderScene &scene) {
+  impl->setScene(scene.vertexShader, scene.fragmentShader);
+}
+
+void VulkanRenderer::pollShaderReload() { impl->pollShaderReload(); }
+
 void VulkanRenderer::init(Window &targetWindow, const ShaderScene &scene,
                           const WindowConfig &) {
-  impl->vertexShaderPath = deriveSpirvPath(scene.vertexShader);
-  impl->fragmentShaderPath = deriveSpirvPath(scene.fragmentShader);
+  impl->vertexGlslPath = scene.vertexShader;
+  impl->fragmentGlslPath = scene.fragmentShader;
   impl->init(targetWindow);
   std::cout << "[shader] Active scene pipeline ready: " << scene.name << " ("
-            << impl->vertexShaderPath << " + " << impl->fragmentShaderPath
+            << (impl->shaderRuntimeCompile ? "runtime-compiled GLSL"
+                                           : "offline SPIR-V")
             << ")" << std::endl;
 }
 

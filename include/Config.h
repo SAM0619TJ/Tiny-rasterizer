@@ -35,6 +35,21 @@ struct GPUConfig {
     int samples = 0;
 };
 
+// 着色器加载配置（双路径 + 热重载）
+struct ShaderConfig {
+    bool runtimeCompile = false;          // 开发模式：运行时用 glslc 编译 GLSL
+    bool hotReload = false;               // 开发模式：检测源文件改动自动重载
+    std::string spirvDir = "shaders_spirv"; // 离线 SPIR-V 目录
+};
+
+// 后处理配置（离屏渲染 + 全屏合成）
+struct PostProcessingConfig {
+    bool enabled = true;     // 是否启用后处理效果（关闭则直通）
+    float exposure = 1.0f;   // 曝光倍数
+    float vignette = 0.3f;   // 暗角强度
+    float grain = 0.05f;     // 颗粒强度
+};
+
 // 主配置类
 class Config {
 public:
@@ -51,6 +66,8 @@ public:
     const WindowConfig& getWindowConfig() const { return windowConfig; }
     const PerformanceConfig& getPerformanceConfig() const { return perfConfig; }
     const GPUConfig& getGPUConfig() const { return gpuConfig; }
+    const ShaderConfig& getShaderConfig() const { return shaderConfig; }
+    const PostProcessingConfig& getPostProcessingConfig() const { return postConfig; }
     
     // 获取所有场景
     const std::map<std::string, ShaderScene>& getAllScenes() const { return scenes; }
@@ -67,11 +84,15 @@ private:
     WindowConfig windowConfig;
     PerformanceConfig perfConfig;
     GPUConfig gpuConfig;
+    ShaderConfig shaderConfig;
+    PostProcessingConfig postConfig;
     
     void loadScenes(const YAML::Node& config);
     void loadWindowConfig(const YAML::Node& config);
     void loadPerformanceConfig(const YAML::Node& config);
     void loadGPUConfig(const YAML::Node& config);
+    void loadShaderConfig(const YAML::Node& config);
+    void loadPostProcessingConfig(const YAML::Node& config);
 };
 
 #endif // CONFIG_H

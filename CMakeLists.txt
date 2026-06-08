@@ -44,6 +44,7 @@ get_property(VULKAN_INCLUDE_DIR_FROM_CACHE CACHE Vulkan_INCLUDE_DIR PROPERTY VAL
 set(SOURCE_FILES
     "${SRC_DIR}/Config.cpp"
     "${SRC_DIR}/main.cpp"
+    "${SRC_DIR}/ShaderManager.cpp"
     "${SRC_DIR}/VulkanRenderer.cpp"
     "${SRC_DIR}/Window.cpp"
 )
@@ -110,6 +111,7 @@ add_spirv_shader("${SHADER_DIR}/vertex.glsl" vert vertex)
 add_spirv_shader("${SHADER_DIR}/fragment.glsl" frag fragment)
 add_spirv_shader("${SHADER_DIR}/rotation_matrix.glsl" frag rotation_matrix)
 add_spirv_shader("${SHADER_DIR}/water.glsl" frag water)
+add_spirv_shader("${SHADER_DIR}/composite.glsl" frag composite)
 
 add_custom_target(compile_shaders ALL DEPENDS ${SPIRV_OUTPUTS})
 add_dependencies(${PROJECT_NAME} compile_shaders)

@@ -57,6 +57,10 @@ void Window::getCursorPos(double &xpos, double &ypos) const {
   glfwGetCursorPos(window, &xpos, &ypos);
 }
 
+bool Window::getKey(int key) const {
+  return window != nullptr && glfwGetKey(window, key) == GLFW_PRESS;
+}
+
 void Window::setTitle(const std::string &title) {
   glfwSetWindowTitle(window, title.c_str());
 }

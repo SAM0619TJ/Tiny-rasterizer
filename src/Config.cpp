@@ -49,6 +49,8 @@ bool Config::load(const std::string& configPath) {
         loadWindowConfig(config);
         loadPerformanceConfig(config);
         loadGPUConfig(config);
+        loadShaderConfig(config);
+        loadPostProcessingConfig(config);
         
         std::cout << "Config loaded successfully from: " << configPath << std::endl;
         std::cout << "Active scene: " << activeScene;
@@ -126,6 +128,32 @@ void Config::loadGPUConfig(const YAML::Node& config) {
     if (gpu["opengl_major"]) gpuConfig.openglMajor = gpu["opengl_major"].as<int>();
     if (gpu["opengl_minor"]) gpuConfig.openglMinor = gpu["opengl_minor"].as<int>();
     if (gpu["samples"]) gpuConfig.samples = gpu["samples"].as<int>();
+}
+
+void Config::loadShaderConfig(const YAML::Node& config) {
+    if (!config["shader"]) {
+        return;
+    }
+
+    const YAML::Node& shader = config["shader"];
+    if (shader["runtime_compile"])
+        shaderConfig.runtimeCompile = shader["runtime_compile"].as<bool>();
+    if (shader["hot_reload"])
+        shaderConfig.hotReload = shader["hot_reload"].as<bool>();
+    if (shader["spirv_dir"])
+        shaderConfig.spirvDir = shader["spirv_dir"].as<std::string>();
+}
+
+void Config::loadPostProcessingConfig(const YAML::Node& config) {
+    if (!config["post_processing"]) {
+        return;
+    }
+
+    const YAML::Node& post = config["post_processing"];
+    if (post["enabled"]) postConfig.enabled = post["enabled"].as<bool>();
+    if (post["exposure"]) postConfig.exposure = post["exposure"].as<float>();
+    if (post["vignette"]) postConfig.vignette = post["vignette"].as<float>();
+    if (post["grain"]) postConfig.grain = post["grain"].as<float>();
 }
 
 ShaderScene Config::getActiveScene() const {

@@ -25,6 +25,7 @@ public:
   // 获取窗口属性
   void getFramebufferSize(int &width, int &height) const;
   void getCursorPos(double &xpos, double &ypos) const;
+  bool getKey(int key) const;
   GLFWwindow *getGLFWwindow() const { return window; }
 
   // 设置窗口标题
