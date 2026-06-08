@@ -49,7 +49,11 @@ case $SCENE in
 esac
 
 # 更新配置文件
-sed -i "s/^active_scene: .*/active_scene: \"$SCENE_NAME\"/" "$CONFIG_FILE"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "s/^active_scene: .*/active_scene: \"$SCENE_NAME\"/" "$CONFIG_FILE"
+else
+    sed -i "s/^active_scene: .*/active_scene: \"$SCENE_NAME\"/" "$CONFIG_FILE"
+fi
 
 echo "✓ 场景已切换到: $DISPLAY_NAME"
 echo ""
