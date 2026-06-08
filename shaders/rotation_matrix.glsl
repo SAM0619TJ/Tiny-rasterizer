@@ -9,7 +9,8 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
 layout(location = 0) out vec4 FragColor;
 
 #define fragColor FragColor
-#define fragCoord gl_FragCoord
+// Vulkan gl_FragCoord 原点在左上；Shadertoy 原点在左下
+#define fragCoord vec2(gl_FragCoord.x, iResolution.y - gl_FragCoord.y)
 
 float gTime = 0.;
 const float REPEAT = 5.0;

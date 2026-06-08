@@ -76,7 +76,8 @@ void testPerformanceConfig(const Config &config) {
 
 void testSpirvOutputs(const std::string &spirvRoot) {
   const std::vector<std::string> outputs = {
-      "vertex.spv", "fragment.spv", "rotation_matrix.spv", "water.spv"};
+      "vertex.spv", "fragment.spv", "rotation_matrix.spv", "water.spv",
+      "composite.spv"};
 
   for (const std::string &output : outputs) {
     requireReadableFile(joinPath(spirvRoot, output));

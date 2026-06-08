@@ -41,7 +41,9 @@ vec4 rm(vec3 ro, vec3 rd){
     return vec4(col, 1.0 / (d * 100.0));
 }
 void main(){
-    vec2 uv = (gl_FragCoord.xy - iResolution.xy * 0.5) / iResolution.x;
+    // Vulkan gl_FragCoord 原点在左上；Shadertoy 原点在左下
+    vec2 fc = vec2(gl_FragCoord.x, iResolution.y - gl_FragCoord.y);
+    vec2 uv = (fc - iResolution.xy * 0.5) / iResolution.x;
     vec3 ro = vec3(0.0, 0.0, -50.0);
     ro.xz = rotate(ro.xz, iTime);
     vec3 cf = normalize(-ro);

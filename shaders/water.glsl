@@ -146,6 +146,8 @@ vec3 getPixel(vec2 coord) {
 }
 
 void main() {
-    vec3 color = getPixel(gl_FragCoord.xy);
+    // Vulkan gl_FragCoord 原点在左上；Shadertoy 原点在左下
+    vec2 coord = vec2(gl_FragCoord.x, iResolution.y - gl_FragCoord.y);
+    vec3 color = getPixel(coord);
     fragColor  = vec4(pow(color, vec3(0.65)), 1.0);
 }

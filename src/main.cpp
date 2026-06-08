@@ -59,6 +59,7 @@ int runApplication() {
   const WindowConfig &windowConfig = config.getWindowConfig();
   const PerformanceConfig &perfConfig = config.getPerformanceConfig();
   const ShaderConfig &shaderConfig = config.getShaderConfig();
+  const PostProcessingConfig &postConfig = config.getPostProcessingConfig();
   printStartupSummary(activeScene, windowConfig);
 
   if (isHeadlessTestRun()) {
@@ -74,6 +75,7 @@ int runApplication() {
     VulkanRenderer renderer;
     renderer.setShaderOptions(shaderConfig.runtimeCompile,
                               shaderConfig.hotReload, shaderConfig.spirvDir);
+    renderer.setPostProcessingConfig(postConfig);
     renderer.init(window, activeScene, windowConfig);
 
     // 收集场景列表，支持运行时用数字键 1..N 切换
@@ -82,12 +84,18 @@ int runApplication() {
       sceneList.emplace_back(entry.first, entry.second);
     }
     std::vector<char> sceneKeyDown(sceneList.size(), 0);
+    char postKeyDown = 0;
 
     std::cout << "[input] 按数字键切换场景:";
     for (size_t i = 0; i < sceneList.size() && i < 9; ++i) {
       std::cout << " [" << (i + 1) << "]=" << sceneList[i].first;
     }
-    std::cout << std::endl;
+    std::cout << " | [P]=后处理开关" << std::endl;
+    std::cout << "[post] 后处理: "
+              << (postConfig.enabled ? "开启" : "关闭")
+              << " (exposure=" << postConfig.exposure
+              << ", vignette=" << postConfig.vignette
+              << ", grain=" << postConfig.grain << ")" << std::endl;
     if (shaderConfig.hotReload) {
       std::cout << "[shader] 热重载已启用 ("
                 << (shaderConfig.runtimeCompile ? "监视 GLSL 源"
@@ -134,6 +142,12 @@ int runApplication() {
       }
 
       renderer.pollShaderReload();
+
+      const bool postDown = window.getKey(GLFW_KEY_P);
+      if (postDown && !postKeyDown) {
+        renderer.togglePostProcessing();
+      }
+      postKeyDown = postDown ? 1 : 0;
 
       double mouseX = 0.0;
       double mouseY = 0.0;
