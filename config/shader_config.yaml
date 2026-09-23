@@ -41,12 +41,6 @@ performance:
   show_console_fps: true    # 是否在终端显示FPS
   show_title_fps: true      # 是否在窗口标题显示FPS
 
-# GPU 配置
-gpu:
-  opengl_major: 4
-  opengl_minor: 1
-  samples: 0  # MSAA采样数，0=禁用
-
 # 着色器加载配置（双路径 + 热重载）
 shader:
   runtime_compile: false   # true=运行时用 glslc 编译 GLSL（开发模式），false=加载离线 SPIR-V

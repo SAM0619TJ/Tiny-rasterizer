@@ -61,7 +61,6 @@ bool Config::load(const std::string& configPath) {
         
         loadWindowConfig(config);
         loadPerformanceConfig(config);
-        loadGPUConfig(config);
         loadShaderConfig(config);
         loadPostProcessingConfig(config);
         loadComputeConfig(config);
@@ -131,17 +130,6 @@ void Config::loadPerformanceConfig(const YAML::Node& config) {
         perfConfig.showConsoleFps = perf["show_console_fps"].as<bool>();
     if (perf["show_title_fps"]) 
         perfConfig.showTitleFps = perf["show_title_fps"].as<bool>();
-}
-
-void Config::loadGPUConfig(const YAML::Node& config) {
-    if (!config["gpu"]) {
-        return;
-    }
-    
-    const YAML::Node& gpu = config["gpu"];
-    if (gpu["opengl_major"]) gpuConfig.openglMajor = gpu["opengl_major"].as<int>();
-    if (gpu["opengl_minor"]) gpuConfig.openglMinor = gpu["opengl_minor"].as<int>();
-    if (gpu["samples"]) gpuConfig.samples = gpu["samples"].as<int>();
 }
 
 void Config::loadShaderConfig(const YAML::Node& config) {

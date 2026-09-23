@@ -28,13 +28,6 @@ struct PerformanceConfig {
     bool showTitleFps = true;
 };
 
-// GPU配置
-struct GPUConfig {
-    int openglMajor = 4;
-    int openglMinor = 1;
-    int samples = 0;
-};
-
 // 着色器加载配置（双路径 + 热重载）
 struct ShaderConfig {
     bool runtimeCompile = false;          // 开发模式：运行时用 glslc 编译 GLSL
@@ -82,7 +75,6 @@ public:
     // 获取配置
     const WindowConfig& getWindowConfig() const { return windowConfig; }
     const PerformanceConfig& getPerformanceConfig() const { return perfConfig; }
-    const GPUConfig& getGPUConfig() const { return gpuConfig; }
     const ShaderConfig& getShaderConfig() const { return shaderConfig; }
     const PostProcessingConfig& getPostProcessingConfig() const { return postConfig; }
     const ComputeConfig& getComputeConfig() const { return computeConfig; }
@@ -101,7 +93,6 @@ private:
     std::map<std::string, ShaderScene> scenes;
     WindowConfig windowConfig;
     PerformanceConfig perfConfig;
-    GPUConfig gpuConfig;
     ShaderConfig shaderConfig;
     PostProcessingConfig postConfig;
     ComputeConfig computeConfig;
@@ -109,7 +100,6 @@ private:
     void loadScenes(const YAML::Node& config);
     void loadWindowConfig(const YAML::Node& config);
     void loadPerformanceConfig(const YAML::Node& config);
-    void loadGPUConfig(const YAML::Node& config);
     void loadShaderConfig(const YAML::Node& config);
     void loadPostProcessingConfig(const YAML::Node& config);
     void loadComputeConfig(const YAML::Node& config);
