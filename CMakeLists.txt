@@ -42,6 +42,7 @@ get_filename_component(VULKAN_SDK_ROOT "${VULKAN_LIBRARY_DIR}" DIRECTORY)
 get_property(VULKAN_INCLUDE_DIR_FROM_CACHE CACHE Vulkan_INCLUDE_DIR PROPERTY VALUE)
 
 set(SOURCE_FILES
+    "${SRC_DIR}/ComputeContext.cpp"
     "${SRC_DIR}/Config.cpp"
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/ShaderManager.cpp"
@@ -113,6 +114,7 @@ add_spirv_shader("${SHADER_DIR}/fragment.glsl" frag fragment)
 add_spirv_shader("${SHADER_DIR}/rotation_matrix.glsl" frag rotation_matrix)
 add_spirv_shader("${SHADER_DIR}/water.glsl" frag water)
 add_spirv_shader("${SHADER_DIR}/composite.glsl" frag composite)
+add_spirv_shader("${SHADER_DIR}/grain.glsl" comp grain)
 
 add_custom_target(compile_shaders ALL DEPENDS ${SPIRV_OUTPUTS})
 add_dependencies(${PROJECT_NAME} compile_shaders)
@@ -255,4 +257,15 @@ add_test(
         config_texture
         ${CMAKE_CURRENT_SOURCE_DIR}/config/shader_config.yaml
         ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Phase 7 验收：强制走 compute 生成噪声纹理的路径，同样要求零 validation error。
+add_test(
+    NAME vulkan_compute_noise_strict
+    COMMAND ${PROJECT_NAME}
+)
+set_tests_properties(vulkan_compute_noise_strict PROPERTIES
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    ENVIRONMENT "TINY_RASTERIZER_MAX_FRAMES=60;TINY_RASTERIZER_STRICT_VALIDATION=1;TINY_RASTERIZER_FORCE_COMPUTE_TEXTURE=1"
+    TIMEOUT 60
 )

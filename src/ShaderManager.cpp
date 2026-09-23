@@ -31,7 +31,15 @@ std::string stemOf(const std::string &path) {
 }
 
 const char *stageFlag(ShaderStage stage) {
-  return stage == ShaderStage::Vertex ? "vert" : "frag";
+  switch (stage) {
+  case ShaderStage::Vertex:
+    return "vert";
+  case ShaderStage::Fragment:
+    return "frag";
+  case ShaderStage::Compute:
+    return "comp";
+  }
+  return "frag";
 }
 
 long long fileMtime(const std::string &path) {

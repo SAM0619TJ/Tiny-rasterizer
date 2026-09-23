@@ -58,6 +58,13 @@ struct PostProcessingConfig {
     TextureSource textureSource = TextureSource::File;
     std::string texturePath; // textureSource=File 时的 PPM/TGA 路径
 };
+
+// Compute 配置（Phase 7 预留：首个任务为 GPU 生成噪声纹理）
+struct ComputeConfig {
+    bool enabled = true;                            // 关闭则不用 compute 路径
+    std::string grainShader = "shaders/grain.glsl";  // compute 着色器源
+    int textureSize = 256;                          // 生成纹理边长
+    int seed = 1;                                   // 噪声种子
 };
 
 // 主配置类
@@ -78,6 +85,7 @@ public:
     const GPUConfig& getGPUConfig() const { return gpuConfig; }
     const ShaderConfig& getShaderConfig() const { return shaderConfig; }
     const PostProcessingConfig& getPostProcessingConfig() const { return postConfig; }
+    const ComputeConfig& getComputeConfig() const { return computeConfig; }
     
     // 获取所有场景
     const std::map<std::string, ShaderScene>& getAllScenes() const { return scenes; }
@@ -96,6 +104,7 @@ private:
     GPUConfig gpuConfig;
     ShaderConfig shaderConfig;
     PostProcessingConfig postConfig;
+    ComputeConfig computeConfig;
     
     void loadScenes(const YAML::Node& config);
     void loadWindowConfig(const YAML::Node& config);
@@ -103,6 +112,7 @@ private:
     void loadGPUConfig(const YAML::Node& config);
     void loadShaderConfig(const YAML::Node& config);
     void loadPostProcessingConfig(const YAML::Node& config);
+    void loadComputeConfig(const YAML::Node& config);
 };
 
 #endif // CONFIG_H

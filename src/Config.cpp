@@ -64,6 +64,7 @@ bool Config::load(const std::string& configPath) {
         loadGPUConfig(config);
         loadShaderConfig(config);
         loadPostProcessingConfig(config);
+        loadComputeConfig(config);
         
         std::cout << "Config loaded successfully from: " << configPath << std::endl;
         std::cout << "Active scene: " << activeScene;
@@ -173,6 +174,19 @@ void Config::loadPostProcessingConfig(const YAML::Node& config) {
         postConfig.textureSource = parseTextureSource(
             post["texture_source"].as<std::string>());
 }
+
+void Config::loadComputeConfig(const YAML::Node& config) {
+    if (!config["compute"]) {
+        return;
+    }
+
+    const YAML::Node& compute = config["compute"];
+    if (compute["enabled"]) computeConfig.enabled = compute["enabled"].as<bool>();
+    if (compute["grain_shader"])
+        computeConfig.grainShader = compute["grain_shader"].as<std::string>();
+    if (compute["texture_size"])
+        computeConfig.textureSize = compute["texture_size"].as<int>();
+    if (compute["seed"]) computeConfig.seed = compute["seed"].as<int>();
 }
 
 ShaderScene Config::getActiveScene() const {

@@ -27,6 +27,8 @@ public:
   void pollShaderReload();
   // 后处理参数（需在 init 前调用）。
   void setPostProcessingConfig(const PostProcessingConfig &config);
+  // Phase 7：compute 配置（需在 init 前调用）。
+  void setComputeConfig(const ComputeConfig &config);
   // 运行时切换后处理开关（对应 composite 中 enabled 参数）。
   void togglePostProcessing();
 

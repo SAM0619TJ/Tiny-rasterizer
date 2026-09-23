@@ -77,6 +77,7 @@ int runApplication() {
   const PerformanceConfig &perfConfig = config.getPerformanceConfig();
   const ShaderConfig &shaderConfig = config.getShaderConfig();
   const PostProcessingConfig &postConfig = config.getPostProcessingConfig();
+  ComputeConfig computeConfig = config.getComputeConfig();
   printStartupSummary(activeScene, windowConfig);
 
   if (isHeadlessTestRun()) {
@@ -93,6 +94,7 @@ int runApplication() {
     renderer.setShaderOptions(shaderConfig.runtimeCompile,
                               shaderConfig.hotReload, shaderConfig.spirvDir);
     renderer.setPostProcessingConfig(postConfig);
+    renderer.setComputeConfig(computeConfig);
     renderer.init(window, activeScene, windowConfig);
     const double startupMs = (Window::getTime() - startupBeginTime) * 1000.0;
 
@@ -114,6 +116,10 @@ int runApplication() {
               << " (exposure=" << postConfig.exposure
               << ", vignette=" << postConfig.vignette
               << ", grain=" << postConfig.grain << ")" << std::endl;
+    std::cout << "[compute] "
+              << (computeConfig.enabled ? "启用" : "关闭")
+              << " (texture_size=" << computeConfig.textureSize
+              << ", shader=" << computeConfig.grainShader << ")" << std::endl;
     if (shaderConfig.hotReload) {
       std::cout << "[shader] 热重载已启用 ("
                 << (shaderConfig.runtimeCompile ? "监视 GLSL 源"

@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include "ComputeContext.h"
 #include "ShaderManager.h"
 #include "TextureLoader.h"
 #include "Window.h"
@@ -342,6 +343,14 @@ struct PostParams {
 
 constexpr int kFallbackNoiseSize = 256;
 constexpr VkFormat kPostTextureFormat = VK_FORMAT_R8G8B8A8_UNORM;
+
+// 与 shaders/grain.glsl 的 push_constant 布局保持一致（4x uint32 = 16 字节）。
+struct GrainPushConstants {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t seed = 0;
+  uint32_t padding = 0;
+};
 constexpr const char *kCompositeFragmentGlsl = "shaders/composite.glsl";
 
 // 覆盖整个 NDC 的全屏四边形（两个三角形，逆时针）
@@ -427,6 +436,8 @@ struct VulkanRenderer::Impl {
   std::array<OffscreenTarget, kMaxFramesInFlight> offscreenTargets{};
 
   ShaderManager shaderManager;
+  ComputeContext computeContext;
+  ComputeConfig computeConfig{};
   std::string vertexGlslPath;
   std::string fragmentGlslPath;
   std::string spirvDir = "shaders_spirv";
@@ -473,6 +484,7 @@ struct VulkanRenderer::Impl {
     createCommandPool();
     createCommandBuffers();
     shaderManager.init(device, shaderRuntimeCompile, spirvDir);
+    initCompute();
     createDescriptorSetLayout();
     createPipelineLayout();
     createOffscreenRenderPass();
@@ -659,6 +671,7 @@ struct VulkanRenderer::Impl {
         vkDestroyPipelineLayout(device, compositePipelineLayout, nullptr);
       }
       shaderManager.destroy();
+      computeContext.destroy();
       if (descriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
       }
@@ -1298,6 +1311,13 @@ struct VulkanRenderer::Impl {
       barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
       srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
       dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+               newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+      // compute storage image：dispatch 之前先切到 GENERAL 布局。
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     } else {
       throw std::runtime_error("Unsupported Vulkan image layout transition");
     }
@@ -1429,6 +1449,96 @@ struct VulkanRenderer::Impl {
     }
   }
 
+  // Phase 7：初始化 compute 上下文。只有与图形队列同族（同一队列）时才启用，
+  // 跨队列同步属于后续扩展点，此时退回 CPU 路径。
+  void initCompute() {
+    if (!computeConfig.enabled) {
+      std::cout << "[compute] Disabled by config; keeping CPU texture path"
+                << std::endl;
+      return;
+    }
+
+    const uint32_t graphicsFamily =
+        findQueueFamilies(physicalDevice, surface).graphicsFamily.value();
+
+    uint32_t computeFamily = VK_QUEUE_FAMILY_IGNORED;
+    if (!ComputeContext::queryQueueFamily(physicalDevice, graphicsFamily,
+                                          &computeFamily)) {
+      std::cout << "[compute] No compute-capable queue family; CPU fallback"
+                << std::endl;
+      return;
+    }
+    if (computeFamily != graphicsFamily) {
+      std::cout << "[compute] Compute family " << computeFamily
+                << " differs from graphics family " << graphicsFamily
+                << "; cross-queue sync is a planned extension, CPU fallback"
+                << std::endl;
+      return;
+    }
+
+    ComputeContext::DeviceHandles handles{};
+    handles.physicalDevice = physicalDevice;
+    handles.device = device;
+    handles.queueFamilyIndex = computeFamily;
+    handles.queue = graphicsQueue;
+    handles.commandPool = commandPool;
+
+    if (!computeContext.init(handles, "grain-noise")) {
+      return;
+    }
+
+    try {
+      VkShaderModule module = shaderManager.getModule(
+          computeConfig.grainShader, ShaderStage::Compute);
+      computeContext.createPipeline(module, sizeof(GrainPushConstants));
+    } catch (const std::exception &e) {
+      std::cerr << "[compute] " << e.what() << " -> CPU fallback" << std::endl;
+      computeContext.destroy();
+    }
+  }
+
+  // 纹理来源完全由配置决定（post_processing.texture_source），
+  // 渲染器不再读取任何测试开关。
+  bool useComputeTexture() const {
+    return postConfig.textureSource == TextureSource::Compute &&
+           computeConfig.enabled && computeContext.available();
+  }
+
+  // Phase 7 首个 compute 任务：GPU 侧生成噪声纹理（storage image + dispatch）。
+  void createPostTextureWithCompute() {
+    const uint32_t size =
+        static_cast<uint32_t>(std::max(1, computeConfig.textureSize));
+    postTextureWidth = static_cast<int>(size);
+    postTextureHeight = static_cast<int>(size);
+
+    createImage(size, size, kPostTextureFormat,
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                    VK_IMAGE_USAGE_STORAGE_BIT,
+                postTextureImage, postTextureMemory);
+    postTextureView = createImageView(postTextureImage, kPostTextureFormat);
+    computeContext.updateStorageImage(postTextureView);
+
+    GrainPushConstants push{};
+    push.width = size;
+    push.height = size;
+    push.seed = static_cast<uint32_t>(computeConfig.seed);
+
+    constexpr uint32_t kGroupSize = 8u;
+    const uint32_t groupCount = (size + kGroupSize - 1u) / kGroupSize;
+
+    submitOneTimeCommands([&](VkCommandBuffer cmd) {
+      transitionImageLayout(cmd, postTextureImage, VK_IMAGE_LAYOUT_UNDEFINED,
+                            VK_IMAGE_LAYOUT_GENERAL);
+      computeContext.dispatch(cmd, groupCount, groupCount, 1, &push,
+                              sizeof(push));
+      // 显式同步点：compute 写 -> fragment 采样读
+      ComputeContext::insertWriteToReadBarrier(cmd, postTextureImage);
+    });
+
+    std::cout << "[compute] Noise texture generated on GPU (" << size << "x"
+              << size << ", seed=" << computeConfig.seed << ")" << std::endl;
+  }
+
   // Phase 6 纹理链路入口：优先从磁盘加载（PPM/TGA），失败则回退程序化噪声。
   // 两者走同一条 staging buffer -> image -> layout transition 上传路径。
   TextureImage resolvePostTexture() const {
@@ -1454,6 +1564,17 @@ struct VulkanRenderer::Impl {
 
   // 纹理来源分派：配置即规则；不可用时逐级降级并明确告警。
   void createPostTexture() {
+    switch (postConfig.textureSource) {
+    case TextureSource::Compute:
+      if (useComputeTexture()) {
+        createPostTextureWithCompute();
+        return;
+      }
+      std::cerr << "[texture] texture_source=compute 不可用 (compute.enabled="
+                << (computeConfig.enabled ? "true" : "false")
+                << ", context=" << (computeContext.available() ? "ready" : "absent")
+                << "); 降级到文件/程序化纹理" << std::endl;
+      break;
     case TextureSource::Procedural:
       uploadPostTexture(TextureLoader::makeNoise(kFallbackNoiseSize));
       std::cout << "[texture] Procedural noise texture generated ("
@@ -2109,6 +2230,10 @@ void VulkanRenderer::setScene(const ShaderScene &scene) {
 }
 
 void VulkanRenderer::pollShaderReload() { impl->pollShaderReload(); }
+
+void VulkanRenderer::setComputeConfig(const ComputeConfig &config) {
+  impl->computeConfig = config;
+}
 
 void VulkanRenderer::setPostProcessingConfig(const PostProcessingConfig &config) {
   impl->postConfig = config;

@@ -65,3 +65,10 @@ post_processing:
   #   procedural = CPU 端程序化生成
   texture_source: "file"
   texture: "textures/grain.ppm"  # texture_source=file 时使用
+
+# Compute 配置（Phase 7）
+compute:
+  enabled: true     # false 时 texture_source=compute 会降级并告警
+  grain_shader: "shaders/grain.glsl"
+  texture_size: 256
+  seed: 1
