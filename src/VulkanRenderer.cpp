@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 
 #include "ShaderManager.h"
+#include "TextureLoader.h"
 #include "Window.h"
 #include <GLFW/glfw3.h>
 
@@ -339,7 +340,8 @@ struct PostParams {
   float pad = 0.0f;
 };
 
-constexpr int kGrainTextureSize = 256;
+constexpr int kFallbackNoiseSize = 256;
+constexpr VkFormat kPostTextureFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr const char *kCompositeFragmentGlsl = "shaders/composite.glsl";
 
 // 覆盖整个 NDC 的全屏四边形（两个三角形，逆时针）
@@ -408,9 +410,12 @@ struct VulkanRenderer::Impl {
   VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
   VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
   VkSampler textureSampler = VK_NULL_HANDLE;
-  VkImage grainImage = VK_NULL_HANDLE;
-  VkDeviceMemory grainMemory = VK_NULL_HANDLE;
-  VkImageView grainImageView = VK_NULL_HANDLE;
+  // 后处理采样用的颗粒/噪声纹理（可由文件加载，失败则回退程序化噪声）。
+  VkImage postTextureImage = VK_NULL_HANDLE;
+  VkDeviceMemory postTextureMemory = VK_NULL_HANDLE;
+  VkImageView postTextureView = VK_NULL_HANDLE;
+  int postTextureWidth = 0;
+  int postTextureHeight = 0;
 
   struct OffscreenTarget {
     VkImage image = VK_NULL_HANDLE;
@@ -473,7 +478,7 @@ struct VulkanRenderer::Impl {
     createOffscreenRenderPass();
     createOffscreenTargets();
     createTextureSampler();
-    createGrainTexture();
+    createPostTexture();
     createScenePipeline();
     createCompositeDescriptorSetLayout();
     createCompositePipelineLayout();
@@ -667,14 +672,14 @@ struct VulkanRenderer::Impl {
       if (textureSampler != VK_NULL_HANDLE) {
         vkDestroySampler(device, textureSampler, nullptr);
       }
-      if (grainImageView != VK_NULL_HANDLE) {
-        vkDestroyImageView(device, grainImageView, nullptr);
+      if (postTextureView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, postTextureView, nullptr);
       }
-      if (grainImage != VK_NULL_HANDLE) {
-        vkDestroyImage(device, grainImage, nullptr);
+      if (postTextureImage != VK_NULL_HANDLE) {
+        vkDestroyImage(device, postTextureImage, nullptr);
       }
-      if (grainMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, grainMemory, nullptr);
+      if (postTextureMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, postTextureMemory, nullptr);
       }
 
       for (FrameSync &frame : frames) {
@@ -1424,16 +1429,49 @@ struct VulkanRenderer::Impl {
     }
   }
 
-  void createGrainTexture() {
-    std::vector<uint8_t> pixels(
-        static_cast<size_t>(kGrainTextureSize * kGrainTextureSize));
-    uint32_t state = 0x12345678u;
-    for (uint8_t &pixel : pixels) {
-      state = state * 1664525u + 1013904223u;
-      pixel = static_cast<uint8_t>((state >> 16) & 0xFF);
+  // Phase 6 纹理链路入口：优先从磁盘加载（PPM/TGA），失败则回退程序化噪声。
+  // 两者走同一条 staging buffer -> image -> layout transition 上传路径。
+  TextureImage resolvePostTexture() const {
+    if (!postConfig.texturePath.empty()) {
+      try {
+        TextureImage image = TextureLoader::load(postConfig.texturePath);
+        if (image.valid()) {
+          std::cout << "[texture] Loaded " << postConfig.texturePath << " ("
+                    << image.width << "x" << image.height << ")" << std::endl;
+          return image;
+        }
+      } catch (const std::exception &e) {
+        std::cerr << "[texture] " << e.what()
+                  << " -> falling back to procedural noise" << std::endl;
+      }
     }
 
-    const VkDeviceSize imageSize = pixels.size();
+    TextureImage image = TextureLoader::makeNoise(kFallbackNoiseSize);
+    std::cout << "[texture] Procedural noise texture generated ("
+              << image.width << "x" << image.height << ")" << std::endl;
+    return image;
+  }
+
+  // 纹理来源分派：配置即规则；不可用时逐级降级并明确告警。
+  void createPostTexture() {
+    case TextureSource::Procedural:
+      uploadPostTexture(TextureLoader::makeNoise(kFallbackNoiseSize));
+      std::cout << "[texture] Procedural noise texture generated ("
+                << postTextureWidth << "x" << postTextureHeight << ")"
+                << std::endl;
+      return;
+    case TextureSource::File:
+      break;
+    }
+
+    uploadPostTexture(resolvePostTexture());
+  }
+
+  void uploadPostTexture(const TextureImage &image) {
+    postTextureWidth = image.width;
+    postTextureHeight = image.height;
+
+    const VkDeviceSize imageSize = image.pixels.size();
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
     createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -1443,37 +1481,37 @@ struct VulkanRenderer::Impl {
 
     void *mapped = nullptr;
     checkVk(vkMapMemory(device, stagingMemory, 0, imageSize, 0, &mapped),
-            "Failed mapping grain staging buffer");
-    std::memcpy(mapped, pixels.data(), static_cast<size_t>(imageSize));
+            "Failed mapping post texture staging buffer");
+    std::memcpy(mapped, image.pixels.data(), static_cast<size_t>(imageSize));
     vkUnmapMemory(device, stagingMemory);
 
-    createImage(static_cast<uint32_t>(kGrainTextureSize),
-                static_cast<uint32_t>(kGrainTextureSize), VK_FORMAT_R8_UNORM,
+    createImage(static_cast<uint32_t>(image.width),
+                static_cast<uint32_t>(image.height), kPostTextureFormat,
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                grainImage, grainMemory);
-    grainImageView = createImageView(grainImage, VK_FORMAT_R8_UNORM);
+                postTextureImage, postTextureMemory);
+    postTextureView = createImageView(postTextureImage, kPostTextureFormat);
 
     submitOneTimeCommands([&](VkCommandBuffer cmd) {
-      transitionImageLayout(cmd, grainImage, VK_IMAGE_LAYOUT_UNDEFINED,
+      transitionImageLayout(cmd, postTextureImage, VK_IMAGE_LAYOUT_UNDEFINED,
                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
       VkBufferImageCopy region{};
       region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       region.imageSubresource.layerCount = 1;
-      region.imageExtent = {static_cast<uint32_t>(kGrainTextureSize),
-                            static_cast<uint32_t>(kGrainTextureSize), 1};
-      vkCmdCopyBufferToImage(cmd, stagingBuffer, grainImage,
+      region.imageExtent = {static_cast<uint32_t>(image.width),
+                            static_cast<uint32_t>(image.height), 1};
+      vkCmdCopyBufferToImage(cmd, stagingBuffer, postTextureImage,
                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-      transitionImageLayout(cmd, grainImage,
+      transitionImageLayout(cmd, postTextureImage,
                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingMemory, nullptr);
-    std::cout << "[texture] Grain texture uploaded (" << kGrainTextureSize
-              << "x" << kGrainTextureSize << ")" << std::endl;
+    std::cout << "[texture] Uploaded " << postTextureWidth << "x"
+              << postTextureHeight << " RGBA8 texture" << std::endl;
   }
 
   void createCompositeDescriptorSetLayout() {
@@ -1779,7 +1817,7 @@ struct VulkanRenderer::Impl {
 
     VkDescriptorImageInfo grainInfo{};
     grainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    grainInfo.imageView = grainImageView;
+    grainInfo.imageView = postTextureView;
     grainInfo.sampler = textureSampler;
 
     VkDescriptorBufferInfo postInfo{};

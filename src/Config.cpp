@@ -2,6 +2,19 @@
 #include <iostream>
 #include <stdexcept>
 
+namespace {
+
+TextureSource parseTextureSource(const std::string& value) {
+    if (value == "file") return TextureSource::File;
+    if (value == "compute") return TextureSource::Compute;
+    if (value == "procedural") return TextureSource::Procedural;
+    std::cerr << "Warning: Unknown post_processing.texture_source '" << value
+              << "', falling back to 'file'" << std::endl;
+    return TextureSource::File;
+}
+
+} // namespace
+
 Config::Config() {
     // 默认配置
     activeScene = "rotation_matrix";
@@ -154,6 +167,12 @@ void Config::loadPostProcessingConfig(const YAML::Node& config) {
     if (post["exposure"]) postConfig.exposure = post["exposure"].as<float>();
     if (post["vignette"]) postConfig.vignette = post["vignette"].as<float>();
     if (post["grain"]) postConfig.grain = post["grain"].as<float>();
+    if (post["texture"] && post["texture"].IsScalar())
+        postConfig.texturePath = post["texture"].as<std::string>();
+    if (post["texture_source"])
+        postConfig.textureSource = parseTextureSource(
+            post["texture_source"].as<std::string>());
+}
 }
 
 ShaderScene Config::getActiveScene() const {

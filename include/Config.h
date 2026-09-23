@@ -42,12 +42,22 @@ struct ShaderConfig {
     std::string spirvDir = "shaders_spirv"; // 离线 SPIR-V 目录
 };
 
+// 颗粒纹理来源：配置即规则，不在渲染器内做隐式优先级判断。
+enum class TextureSource {
+    File,       // 从 post_processing.texture 指定的 PPM/TGA 文件加载
+    Compute,    // 用 compute shader 在 GPU 生成
+    Procedural, // CPU 端程序化生成
+};
+
 // 后处理配置（离屏渲染 + 全屏合成）
 struct PostProcessingConfig {
     bool enabled = true;     // 是否启用后处理效果（关闭则直通）
     float exposure = 1.0f;   // 曝光倍数
     float vignette = 0.3f;   // 暗角强度
     float grain = 0.05f;     // 颗粒强度
+    TextureSource textureSource = TextureSource::File;
+    std::string texturePath; // textureSource=File 时的 PPM/TGA 路径
+};
 };
 
 // 主配置类
