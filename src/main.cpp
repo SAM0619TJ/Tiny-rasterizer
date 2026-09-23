@@ -1,10 +1,10 @@
+#include "AppOptions.h"
 #include "Config.h"
 #include "RenderTypes.h"
 #include "VulkanRenderer.h"
 #include "Window.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -39,16 +39,6 @@ std::string makeFpsTitle(const WindowConfig &windowConfig, double fps,
   return title.str();
 }
 
-int readMaxFrames() {
-  const char *value = std::getenv("TINY_RASTERIZER_MAX_FRAMES");
-  if (value == nullptr) {
-    return 0;
-  }
-  return std::max(0, std::atoi(value));
-}
-
-bool isHeadlessTestRun() {
-  return std::getenv("TINY_RASTERIZER_HEADLESS_TEST") != nullptr;
 void printAcceptanceBaseline(double startupMs, double lifetimeSeconds,
                              int totalFrames, double averageFrameMs,
                              double worstFrameMs, int resizeCount) {
@@ -68,25 +58,32 @@ void printAcceptanceBaseline(double startupMs, double lifetimeSeconds,
   std::cout << "================\n" << std::endl;
 }
 
-int runApplication() {
-  std::cout << "[init] Loading configuration..." << std::endl;
-  Config config("config/shader_config.yaml");
+int runApplication(const AppOptions &options) {
+  std::cout << "[init] Loading configuration from " << options.configPath
+            << "..." << std::endl;
+  Config config(options.configPath);
 
   const ShaderScene activeScene = config.getActiveScene();
   const WindowConfig &windowConfig = config.getWindowConfig();
   const PerformanceConfig &perfConfig = config.getPerformanceConfig();
   const ShaderConfig &shaderConfig = config.getShaderConfig();
-  const PostProcessingConfig &postConfig = config.getPostProcessingConfig();
+
+  // 入口选项投影到配置层：渲染器只看到最终的配置值。
+  PostProcessingConfig postConfig = config.getPostProcessingConfig();
   ComputeConfig computeConfig = config.getComputeConfig();
+  options.applyTo(postConfig, computeConfig);
+
   printStartupSummary(activeScene, windowConfig);
 
-  if (isHeadlessTestRun()) {
+  if (options.headlessTest) {
     VulkanRenderer::runHeadlessSmokeTest();
     return 0;
   }
 
   Window::initGLFW();
-  VulkanRenderer::configureWindowHints();
+  VulkanRenderer::configureWindowHints(options.hideWindow());
+
+  const double startupBeginTime = Window::getTime();
 
   {
     Window window(windowConfig);
@@ -129,11 +126,31 @@ int runApplication() {
 
     std::cout << "[frame] Starting render loop..." << std::endl;
 
+    StressDriver stress({});
+    StressActions stressActions;
+    if (options.stressTest) {
+      std::vector<ShaderScene> stressScenes;
+      stressScenes.reserve(sceneList.size());
+      for (const auto &entry : sceneList) {
+        stressScenes.push_back(entry.second);
+      }
+      stress = StressDriver(std::move(stressScenes));
+      stressActions.resize = [&renderer](int w, int h) {
+        renderer.resize(w, h);
+      };
+      stressActions.togglePostProcessing = [&renderer] {
+        renderer.togglePostProcessing();
+      };
+      stressActions.setScene = [&renderer](const ShaderScene &scene) {
+        renderer.setScene(scene);
+      };
+    }
+
     double lastStatsTime = Window::getTime();
     double lastFrameTime = lastStatsTime;
     int frameCount = 0;
     int totalFrameCount = 0;
-    const int maxFrames = readMaxFrames();
+    const int maxFrames = options.maxFrames;
     double minFrameTime = 999999.0;
     double maxFrameTime = 0.0;
     int lastWidth = 0;
@@ -176,6 +193,10 @@ int runApplication() {
         renderer.togglePostProcessing();
       }
       postKeyDown = postDown ? 1 : 0;
+
+      if (options.stressTest) {
+        stress.tick(stressActions, window, totalFrameCount);
+      }
 
       double mouseX = 0.0;
       double mouseY = 0.0;
@@ -248,13 +269,15 @@ int runApplication() {
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  const AppOptions options = AppOptions::fromCommandLine(argc, argv);
+
   try {
-    return runApplication();
+    return runApplication(options);
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << std::endl;
     const std::string message = e.what();
-    if (isHeadlessTestRun() &&
+    if (options.headlessTest &&
         (message.find("VK_ERROR_INCOMPATIBLE_DRIVER") != std::string::npos ||
          message.find("VkResult -9") != std::string::npos)) {
       std::cerr << "[test] Skipping Vulkan runtime test: no compatible Vulkan "

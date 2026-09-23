@@ -2117,10 +2117,11 @@ VulkanRenderer::VulkanRenderer() : impl(std::make_unique<Impl>()) {}
 
 VulkanRenderer::~VulkanRenderer() { shutdown(); }
 
-void VulkanRenderer::configureWindowHints() {
+void VulkanRenderer::configureWindowHints(bool hideWindow) {
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-  if (std::getenv("TINY_RASTERIZER_MAX_FRAMES") != nullptr) {
+  if (hideWindow) {
+    // 自动化/无头运行时不弹出窗口，避免抢焦点。
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
   }
 }

@@ -42,6 +42,7 @@ get_filename_component(VULKAN_SDK_ROOT "${VULKAN_LIBRARY_DIR}" DIRECTORY)
 get_property(VULKAN_INCLUDE_DIR_FROM_CACHE CACHE Vulkan_INCLUDE_DIR PROPERTY VALUE)
 
 set(SOURCE_FILES
+    "${SRC_DIR}/AppOptions.cpp"
     "${SRC_DIR}/ComputeContext.cpp"
     "${SRC_DIR}/Config.cpp"
     "${SRC_DIR}/main.cpp"
@@ -257,6 +258,18 @@ add_test(
         config_texture
         ${CMAKE_CURRENT_SOURCE_DIR}/config/shader_config.yaml
         ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Phase 3/6 验收：帧循环压测（自动 resize + 后处理开关 + 场景切换），
+# 严格模式下只要验证层报 error 即返回非 0。
+add_test(
+    NAME vulkan_frame_stress_strict
+    COMMAND ${PROJECT_NAME}
+)
+set_tests_properties(vulkan_frame_stress_strict PROPERTIES
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    ENVIRONMENT "TINY_RASTERIZER_MAX_FRAMES=180;TINY_RASTERIZER_STRESS_TEST=1;TINY_RASTERIZER_STRICT_VALIDATION=1"
+    TIMEOUT 120
 )
 
 # Phase 7 验收：强制走 compute 生成噪声纹理的路径，同样要求零 validation error。

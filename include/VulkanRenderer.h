@@ -11,7 +11,7 @@ public:
   VulkanRenderer();
   ~VulkanRenderer() override;
 
-  static void configureWindowHints();
+  static void configureWindowHints(bool hideWindow = false);
   static void runHeadlessSmokeTest();
 
   // Phase 3 验收：自进程启动以来验证层累计的 error/warning 数量。
