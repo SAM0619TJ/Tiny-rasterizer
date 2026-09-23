@@ -42,9 +42,12 @@ get_filename_component(VULKAN_SDK_ROOT "${VULKAN_LIBRARY_DIR}" DIRECTORY)
 get_property(VULKAN_INCLUDE_DIR_FROM_CACHE CACHE Vulkan_INCLUDE_DIR PROPERTY VALUE)
 
 set(SOURCE_FILES
+    "${SRC_DIR}/AppOptions.cpp"
+    "${SRC_DIR}/ComputeContext.cpp"
     "${SRC_DIR}/Config.cpp"
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/ShaderManager.cpp"
+    "${SRC_DIR}/TextureLoader.cpp"
     "${SRC_DIR}/VulkanRenderer.cpp"
     "${SRC_DIR}/Window.cpp"
 )
@@ -112,6 +115,7 @@ add_spirv_shader("${SHADER_DIR}/fragment.glsl" frag fragment)
 add_spirv_shader("${SHADER_DIR}/rotation_matrix.glsl" frag rotation_matrix)
 add_spirv_shader("${SHADER_DIR}/water.glsl" frag water)
 add_spirv_shader("${SHADER_DIR}/composite.glsl" frag composite)
+add_spirv_shader("${SHADER_DIR}/grain.glsl" comp grain)
 
 add_custom_target(compile_shaders ALL DEPENDS ${SPIRV_OUTPUTS})
 add_dependencies(${PROJECT_NAME} compile_shaders)
@@ -137,6 +141,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     ${CMAKE_CURRENT_SOURCE_DIR}/config
     $<TARGET_FILE_DIR:${PROJECT_NAME}>/config
     COMMENT "Copying config files to build directory"
+)
+
+# 复制纹理资源到构建目录
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/textures
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>/textures
+    COMMENT "Copying texture files to build directory"
 )
 
 # 设置IDE中的源文件分组
@@ -221,4 +233,52 @@ set_tests_properties(vulkan_headless_core_init PROPERTIES
     ENVIRONMENT "TINY_RASTERIZER_HEADLESS_TEST=1"
     SKIP_RETURN_CODE 77
     TIMEOUT 10
+)
+
+# Phase 6：纹理解码（PPM/TGA）+ 配置中声明的纹理可加载
+add_executable(texture_loader_test
+    tests/texture_loader_test.cpp
+    ${SRC_DIR}/Config.cpp
+    ${SRC_DIR}/TextureLoader.cpp
+)
+
+target_include_directories(texture_loader_test PRIVATE ${INCLUDE_DIR})
+target_link_libraries(texture_loader_test PRIVATE ${YAML_CPP_TARGET})
+
+add_test(
+    NAME texture_decoder_roundtrip
+    COMMAND texture_loader_test
+        roundtrip
+        ${CMAKE_CURRENT_BINARY_DIR}/testing/texture_work
+)
+
+add_test(
+    NAME texture_config_binding
+    COMMAND texture_loader_test
+        config_texture
+        ${CMAKE_CURRENT_SOURCE_DIR}/config/shader_config.yaml
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Phase 3/6 验收：帧循环压测（自动 resize + 后处理开关 + 场景切换），
+# 严格模式下只要验证层报 error 即返回非 0。
+add_test(
+    NAME vulkan_frame_stress_strict
+    COMMAND ${PROJECT_NAME}
+)
+set_tests_properties(vulkan_frame_stress_strict PROPERTIES
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    ENVIRONMENT "TINY_RASTERIZER_MAX_FRAMES=180;TINY_RASTERIZER_STRESS_TEST=1;TINY_RASTERIZER_STRICT_VALIDATION=1"
+    TIMEOUT 120
+)
+
+# Phase 7 验收：强制走 compute 生成噪声纹理的路径，同样要求零 validation error。
+add_test(
+    NAME vulkan_compute_noise_strict
+    COMMAND ${PROJECT_NAME}
+)
+set_tests_properties(vulkan_compute_noise_strict PROPERTIES
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    ENVIRONMENT "TINY_RASTERIZER_MAX_FRAMES=60;TINY_RASTERIZER_STRICT_VALIDATION=1;TINY_RASTERIZER_FORCE_COMPUTE_TEXTURE=1"
+    TIMEOUT 60
 )

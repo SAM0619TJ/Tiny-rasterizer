@@ -64,3 +64,9 @@ bool Window::getKey(int key) const {
 void Window::setTitle(const std::string &title) {
   glfwSetWindowTitle(window, title.c_str());
 }
+
+void Window::setWindowSize(int width, int height) {
+  if (window != nullptr) {
+    glfwSetWindowSize(window, width, height);
+  }
+}

@@ -2,13 +2,15 @@
 
 #include <vulkan/vulkan.h>
 
+#include "ComputeContext.h"
 #include "ShaderManager.h"
+#include "TextureLoader.h"
 #include "Window.h"
-
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -42,10 +44,19 @@ void checkVk(VkResult result, const std::string &message) {
   }
 }
 
+// Phase 3 验收指标：验证层消息累计计数，供 CI/脚本判定“无 validation error”。
+std::atomic<uint64_t> gValidationErrorCount{0};
+std::atomic<uint64_t> gValidationWarningCount{0};
+
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT,
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT,
     const VkDebugUtilsMessengerCallbackDataEXT *callbackData, void *) {
+  if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0) {
+    ++gValidationErrorCount;
+  } else {
+    ++gValidationWarningCount;
+  }
   std::cerr << "[vulkan][validation] " << callbackData->pMessage << std::endl;
   return VK_FALSE;
 }
@@ -242,14 +253,50 @@ VkSurfaceFormatKHR chooseSurfaceFormat(
   return formats.front();
 }
 
+const char *presentModeName(VkPresentModeKHR mode) {
+  switch (mode) {
+  case VK_PRESENT_MODE_IMMEDIATE_KHR:
+    return "IMMEDIATE";
+  case VK_PRESENT_MODE_MAILBOX_KHR:
+    return "MAILBOX";
+  case VK_PRESENT_MODE_FIFO_KHR:
+    return "FIFO";
+  case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+    return "FIFO_RELAXED";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+// vsync 开 -> FIFO（规范要求必定支持）；vsync 关 -> 优先 MAILBOX（低延迟不撕烈）。
 VkPresentModeKHR choosePresentMode(
-    const std::vector<VkPresentModeKHR> &presentModes) {
-  for (VkPresentModeKHR mode : presentModes) {
-    if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-      return mode;
+    const std::vector<VkPresentModeKHR> &presentModes, bool vsync) {
+  const auto supports = [&presentModes](VkPresentModeKHR mode) {
+    return std::find(presentModes.begin(), presentModes.end(), mode) !=
+           presentModes.end();
+  };
+
+  if (vsync) {
+    if (supports(VK_PRESENT_MODE_FIFO_KHR)) {
+      return VK_PRESENT_MODE_FIFO_KHR;
+    }
+    if (supports(VK_PRESENT_MODE_FIFO_RELAXED_KHR)) {
+      return VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    }
+  } else {
+    if (supports(VK_PRESENT_MODE_MAILBOX_KHR)) {
+      return VK_PRESENT_MODE_MAILBOX_KHR;
+    }
+    if (supports(VK_PRESENT_MODE_IMMEDIATE_KHR)) {
+      return VK_PRESENT_MODE_IMMEDIATE_KHR;
     }
   }
-  return VK_PRESENT_MODE_FIFO_KHR;
+
+  if (supports(VK_PRESENT_MODE_FIFO_KHR)) {
+    return VK_PRESENT_MODE_FIFO_KHR;
+  }
+  return presentModes.empty() ? VK_PRESENT_MODE_FIFO_KHR
+                             : presentModes.front();
 }
 
 VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR &capabilities,
@@ -294,13 +341,39 @@ struct PostParams {
   float pad = 0.0f;
 };
 
-constexpr int kGrainTextureSize = 256;
+constexpr int kFallbackNoiseSize = 256;
+constexpr VkFormat kPostTextureFormat = VK_FORMAT_R8G8B8A8_UNORM;
+
+// 与 shaders/grain.glsl 的 push_constant 布局保持一致（4x uint32 = 16 字节）。
+struct GrainPushConstants {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t seed = 0;
+  uint32_t padding = 0;
+};
 constexpr const char *kCompositeFragmentGlsl = "shaders/composite.glsl";
 
 // 覆盖整个 NDC 的全屏四边形（两个三角形，逆时针）
 const std::array<float, 12> kFullscreenQuad = {
     -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f,
     -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
+
+// 选择实例 API 版本：至少 1.1。
+// 1.1 起 VK_KHR_get_physical_device_properties2 提升为核心，可满足
+// VK_KHR_portability_subset 的依赖要求（VUID-vkCreateDevice-ppEnabledExtensionNames-01387）。
+uint32_t resolveInstanceApiVersion() {
+  auto enumerateVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+      vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"));
+  if (enumerateVersion == nullptr) {
+    return VK_API_VERSION_1_0;
+  }
+
+  uint32_t supported = VK_API_VERSION_1_0;
+  if (enumerateVersion(&supported) != VK_SUCCESS) {
+    return VK_API_VERSION_1_0;
+  }
+  return std::min(supported, static_cast<uint32_t>(VK_API_VERSION_1_1));
+}
 
 std::vector<const char *>
 buildDeviceExtensions(VkPhysicalDevice device) {
@@ -346,9 +419,12 @@ struct VulkanRenderer::Impl {
   VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
   VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
   VkSampler textureSampler = VK_NULL_HANDLE;
-  VkImage grainImage = VK_NULL_HANDLE;
-  VkDeviceMemory grainMemory = VK_NULL_HANDLE;
-  VkImageView grainImageView = VK_NULL_HANDLE;
+  // 后处理采样用的颗粒/噪声纹理（可由文件加载，失败则回退程序化噪声）。
+  VkImage postTextureImage = VK_NULL_HANDLE;
+  VkDeviceMemory postTextureMemory = VK_NULL_HANDLE;
+  VkImageView postTextureView = VK_NULL_HANDLE;
+  int postTextureWidth = 0;
+  int postTextureHeight = 0;
 
   struct OffscreenTarget {
     VkImage image = VK_NULL_HANDLE;
@@ -360,6 +436,8 @@ struct VulkanRenderer::Impl {
   std::array<OffscreenTarget, kMaxFramesInFlight> offscreenTargets{};
 
   ShaderManager shaderManager;
+  ComputeContext computeContext;
+  ComputeConfig computeConfig{};
   std::string vertexGlslPath;
   std::string fragmentGlslPath;
   std::string spirvDir = "shaders_spirv";
@@ -390,6 +468,7 @@ struct VulkanRenderer::Impl {
   bool frameReady = false;
   bool framebufferResized = false;
   bool validationEnabled = false;
+  bool vsyncEnabled = false;
 
   void init(Window &targetWindow) {
     window = &targetWindow;
@@ -405,12 +484,13 @@ struct VulkanRenderer::Impl {
     createCommandPool();
     createCommandBuffers();
     shaderManager.init(device, shaderRuntimeCompile, spirvDir);
+    initCompute();
     createDescriptorSetLayout();
     createPipelineLayout();
     createOffscreenRenderPass();
     createOffscreenTargets();
     createTextureSampler();
-    createGrainTexture();
+    createPostTexture();
     createScenePipeline();
     createCompositeDescriptorSetLayout();
     createCompositePipelineLayout();
@@ -560,6 +640,11 @@ struct VulkanRenderer::Impl {
     if (!initialized || width <= 0 || height <= 0) {
       return;
     }
+    // 尺寸未变时不重建交换链（避免启动后首帧的无意义重建）。
+    if (width == static_cast<int>(swapchainExtent.width) &&
+        height == static_cast<int>(swapchainExtent.height)) {
+      return;
+    }
     framebufferResized = true;
   }
 
@@ -586,6 +671,7 @@ struct VulkanRenderer::Impl {
         vkDestroyPipelineLayout(device, compositePipelineLayout, nullptr);
       }
       shaderManager.destroy();
+      computeContext.destroy();
       if (descriptorPool != VK_NULL_HANDLE) {
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
       }
@@ -599,14 +685,14 @@ struct VulkanRenderer::Impl {
       if (textureSampler != VK_NULL_HANDLE) {
         vkDestroySampler(device, textureSampler, nullptr);
       }
-      if (grainImageView != VK_NULL_HANDLE) {
-        vkDestroyImageView(device, grainImageView, nullptr);
+      if (postTextureView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, postTextureView, nullptr);
       }
-      if (grainImage != VK_NULL_HANDLE) {
-        vkDestroyImage(device, grainImage, nullptr);
+      if (postTextureImage != VK_NULL_HANDLE) {
+        vkDestroyImage(device, postTextureImage, nullptr);
       }
-      if (grainMemory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, grainMemory, nullptr);
+      if (postTextureMemory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, postTextureMemory, nullptr);
       }
 
       for (FrameSync &frame : frames) {
@@ -659,6 +745,11 @@ struct VulkanRenderer::Impl {
       vkDestroyInstance(instance, nullptr);
     }
 
+    std::cout << "[vulkan] Validation summary: errors=" << gValidationErrorCount
+              << " warnings=" << gValidationWarningCount
+              << (validationEnabled ? " (layers enabled)" : " (layers off)")
+              << std::endl;
+
     *this = Impl{};
   }
 
@@ -679,7 +770,7 @@ struct VulkanRenderer::Impl {
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Tiny Rasterizer";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.apiVersion = resolveInstanceApiVersion();
 
     uint32_t glfwExtensionCount = 0;
     const char **glfwExtensions =
@@ -832,7 +923,8 @@ struct VulkanRenderer::Impl {
     const SwapchainSupport support =
         querySwapchainSupport(physicalDevice, surface);
     const VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(support.formats);
-    const VkPresentModeKHR presentMode = choosePresentMode(support.presentModes);
+    const VkPresentModeKHR presentMode =
+        choosePresentMode(support.presentModes, vsyncEnabled);
     const VkExtent2D extent =
         chooseExtent(support.capabilities, window->getGLFWwindow());
 
@@ -880,7 +972,9 @@ struct VulkanRenderer::Impl {
     swapchainImageFormat = surfaceFormat.format;
     swapchainExtent = extent;
     std::cout << "[vulkan] Swapchain created: " << swapchainExtent.width << "x"
-              << swapchainExtent.height << std::endl;
+              << swapchainExtent.height << " | present="
+              << presentModeName(presentMode)
+              << " | vsync=" << (vsyncEnabled ? "on" : "off") << std::endl;
   }
 
   void createImageViews() {
@@ -1217,6 +1311,13 @@ struct VulkanRenderer::Impl {
       barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
       srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
       dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+               newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+      // compute storage image：dispatch 之前先切到 GENERAL 布局。
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+      srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     } else {
       throw std::runtime_error("Unsupported Vulkan image layout transition");
     }
@@ -1348,16 +1449,150 @@ struct VulkanRenderer::Impl {
     }
   }
 
-  void createGrainTexture() {
-    std::vector<uint8_t> pixels(
-        static_cast<size_t>(kGrainTextureSize * kGrainTextureSize));
-    uint32_t state = 0x12345678u;
-    for (uint8_t &pixel : pixels) {
-      state = state * 1664525u + 1013904223u;
-      pixel = static_cast<uint8_t>((state >> 16) & 0xFF);
+  // Phase 7：初始化 compute 上下文。只有与图形队列同族（同一队列）时才启用，
+  // 跨队列同步属于后续扩展点，此时退回 CPU 路径。
+  void initCompute() {
+    if (!computeConfig.enabled) {
+      std::cout << "[compute] Disabled by config; keeping CPU texture path"
+                << std::endl;
+      return;
     }
 
-    const VkDeviceSize imageSize = pixels.size();
+    const uint32_t graphicsFamily =
+        findQueueFamilies(physicalDevice, surface).graphicsFamily.value();
+
+    uint32_t computeFamily = VK_QUEUE_FAMILY_IGNORED;
+    if (!ComputeContext::queryQueueFamily(physicalDevice, graphicsFamily,
+                                          &computeFamily)) {
+      std::cout << "[compute] No compute-capable queue family; CPU fallback"
+                << std::endl;
+      return;
+    }
+    if (computeFamily != graphicsFamily) {
+      std::cout << "[compute] Compute family " << computeFamily
+                << " differs from graphics family " << graphicsFamily
+                << "; cross-queue sync is a planned extension, CPU fallback"
+                << std::endl;
+      return;
+    }
+
+    ComputeContext::DeviceHandles handles{};
+    handles.physicalDevice = physicalDevice;
+    handles.device = device;
+    handles.queueFamilyIndex = computeFamily;
+    handles.queue = graphicsQueue;
+    handles.commandPool = commandPool;
+
+    if (!computeContext.init(handles, "grain-noise")) {
+      return;
+    }
+
+    try {
+      VkShaderModule module = shaderManager.getModule(
+          computeConfig.grainShader, ShaderStage::Compute);
+      computeContext.createPipeline(module, sizeof(GrainPushConstants));
+    } catch (const std::exception &e) {
+      std::cerr << "[compute] " << e.what() << " -> CPU fallback" << std::endl;
+      computeContext.destroy();
+    }
+  }
+
+  // 纹理来源完全由配置决定（post_processing.texture_source），
+  // 渲染器不再读取任何测试开关。
+  bool useComputeTexture() const {
+    return postConfig.textureSource == TextureSource::Compute &&
+           computeConfig.enabled && computeContext.available();
+  }
+
+  // Phase 7 首个 compute 任务：GPU 侧生成噪声纹理（storage image + dispatch）。
+  void createPostTextureWithCompute() {
+    const uint32_t size =
+        static_cast<uint32_t>(std::max(1, computeConfig.textureSize));
+    postTextureWidth = static_cast<int>(size);
+    postTextureHeight = static_cast<int>(size);
+
+    createImage(size, size, kPostTextureFormat,
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                    VK_IMAGE_USAGE_STORAGE_BIT,
+                postTextureImage, postTextureMemory);
+    postTextureView = createImageView(postTextureImage, kPostTextureFormat);
+    computeContext.updateStorageImage(postTextureView);
+
+    GrainPushConstants push{};
+    push.width = size;
+    push.height = size;
+    push.seed = static_cast<uint32_t>(computeConfig.seed);
+
+    constexpr uint32_t kGroupSize = 8u;
+    const uint32_t groupCount = (size + kGroupSize - 1u) / kGroupSize;
+
+    submitOneTimeCommands([&](VkCommandBuffer cmd) {
+      transitionImageLayout(cmd, postTextureImage, VK_IMAGE_LAYOUT_UNDEFINED,
+                            VK_IMAGE_LAYOUT_GENERAL);
+      computeContext.dispatch(cmd, groupCount, groupCount, 1, &push,
+                              sizeof(push));
+      // 显式同步点：compute 写 -> fragment 采样读
+      ComputeContext::insertWriteToReadBarrier(cmd, postTextureImage);
+    });
+
+    std::cout << "[compute] Noise texture generated on GPU (" << size << "x"
+              << size << ", seed=" << computeConfig.seed << ")" << std::endl;
+  }
+
+  // Phase 6 纹理链路入口：优先从磁盘加载（PPM/TGA），失败则回退程序化噪声。
+  // 两者走同一条 staging buffer -> image -> layout transition 上传路径。
+  TextureImage resolvePostTexture() const {
+    if (!postConfig.texturePath.empty()) {
+      try {
+        TextureImage image = TextureLoader::load(postConfig.texturePath);
+        if (image.valid()) {
+          std::cout << "[texture] Loaded " << postConfig.texturePath << " ("
+                    << image.width << "x" << image.height << ")" << std::endl;
+          return image;
+        }
+      } catch (const std::exception &e) {
+        std::cerr << "[texture] " << e.what()
+                  << " -> falling back to procedural noise" << std::endl;
+      }
+    }
+
+    TextureImage image = TextureLoader::makeNoise(kFallbackNoiseSize);
+    std::cout << "[texture] Procedural noise texture generated ("
+              << image.width << "x" << image.height << ")" << std::endl;
+    return image;
+  }
+
+  // 纹理来源分派：配置即规则；不可用时逐级降级并明确告警。
+  void createPostTexture() {
+    switch (postConfig.textureSource) {
+    case TextureSource::Compute:
+      if (useComputeTexture()) {
+        createPostTextureWithCompute();
+        return;
+      }
+      std::cerr << "[texture] texture_source=compute 不可用 (compute.enabled="
+                << (computeConfig.enabled ? "true" : "false")
+                << ", context=" << (computeContext.available() ? "ready" : "absent")
+                << "); 降级到文件/程序化纹理" << std::endl;
+      break;
+    case TextureSource::Procedural:
+      uploadPostTexture(TextureLoader::makeNoise(kFallbackNoiseSize));
+      std::cout << "[texture] Procedural noise texture generated ("
+                << postTextureWidth << "x" << postTextureHeight << ")"
+                << std::endl;
+      return;
+    case TextureSource::File:
+      break;
+    }
+
+    uploadPostTexture(resolvePostTexture());
+  }
+
+  void uploadPostTexture(const TextureImage &image) {
+    postTextureWidth = image.width;
+    postTextureHeight = image.height;
+
+    const VkDeviceSize imageSize = image.pixels.size();
     VkBuffer stagingBuffer = VK_NULL_HANDLE;
     VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
     createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -1367,37 +1602,37 @@ struct VulkanRenderer::Impl {
 
     void *mapped = nullptr;
     checkVk(vkMapMemory(device, stagingMemory, 0, imageSize, 0, &mapped),
-            "Failed mapping grain staging buffer");
-    std::memcpy(mapped, pixels.data(), static_cast<size_t>(imageSize));
+            "Failed mapping post texture staging buffer");
+    std::memcpy(mapped, image.pixels.data(), static_cast<size_t>(imageSize));
     vkUnmapMemory(device, stagingMemory);
 
-    createImage(static_cast<uint32_t>(kGrainTextureSize),
-                static_cast<uint32_t>(kGrainTextureSize), VK_FORMAT_R8_UNORM,
+    createImage(static_cast<uint32_t>(image.width),
+                static_cast<uint32_t>(image.height), kPostTextureFormat,
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                grainImage, grainMemory);
-    grainImageView = createImageView(grainImage, VK_FORMAT_R8_UNORM);
+                postTextureImage, postTextureMemory);
+    postTextureView = createImageView(postTextureImage, kPostTextureFormat);
 
     submitOneTimeCommands([&](VkCommandBuffer cmd) {
-      transitionImageLayout(cmd, grainImage, VK_IMAGE_LAYOUT_UNDEFINED,
+      transitionImageLayout(cmd, postTextureImage, VK_IMAGE_LAYOUT_UNDEFINED,
                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
       VkBufferImageCopy region{};
       region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
       region.imageSubresource.layerCount = 1;
-      region.imageExtent = {static_cast<uint32_t>(kGrainTextureSize),
-                            static_cast<uint32_t>(kGrainTextureSize), 1};
-      vkCmdCopyBufferToImage(cmd, stagingBuffer, grainImage,
+      region.imageExtent = {static_cast<uint32_t>(image.width),
+                            static_cast<uint32_t>(image.height), 1};
+      vkCmdCopyBufferToImage(cmd, stagingBuffer, postTextureImage,
                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-      transitionImageLayout(cmd, grainImage,
+      transitionImageLayout(cmd, postTextureImage,
                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingMemory, nullptr);
-    std::cout << "[texture] Grain texture uploaded (" << kGrainTextureSize
-              << "x" << kGrainTextureSize << ")" << std::endl;
+    std::cout << "[texture] Uploaded " << postTextureWidth << "x"
+              << postTextureHeight << " RGBA8 texture" << std::endl;
   }
 
   void createCompositeDescriptorSetLayout() {
@@ -1703,7 +1938,7 @@ struct VulkanRenderer::Impl {
 
     VkDescriptorImageInfo grainInfo{};
     grainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    grainInfo.imageView = grainImageView;
+    grainInfo.imageView = postTextureView;
     grainInfo.sampler = textureSampler;
 
     VkDescriptorBufferInfo postInfo{};
@@ -1882,10 +2117,11 @@ VulkanRenderer::VulkanRenderer() : impl(std::make_unique<Impl>()) {}
 
 VulkanRenderer::~VulkanRenderer() { shutdown(); }
 
-void VulkanRenderer::configureWindowHints() {
+void VulkanRenderer::configureWindowHints(bool hideWindow) {
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-  if (std::getenv("TINY_RASTERIZER_MAX_FRAMES") != nullptr) {
+  if (hideWindow) {
+    // 自动化/无头运行时不弹出窗口，避免抢焦点。
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
   }
 }
@@ -1897,7 +2133,7 @@ void VulkanRenderer::runHeadlessSmokeTest() {
   appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
   appInfo.pEngineName = "Tiny Rasterizer";
   appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-  appInfo.apiVersion = VK_API_VERSION_1_0;
+  appInfo.apiVersion = resolveInstanceApiVersion();
 
   std::vector<const char *> instanceExtensions;
   bool portabilityEnumerationEnabled = false;
@@ -1996,6 +2232,10 @@ void VulkanRenderer::setScene(const ShaderScene &scene) {
 
 void VulkanRenderer::pollShaderReload() { impl->pollShaderReload(); }
 
+void VulkanRenderer::setComputeConfig(const ComputeConfig &config) {
+  impl->computeConfig = config;
+}
+
 void VulkanRenderer::setPostProcessingConfig(const PostProcessingConfig &config) {
   impl->postConfig = config;
   impl->postEnabledRuntime = config.enabled;
@@ -2004,14 +2244,23 @@ void VulkanRenderer::setPostProcessingConfig(const PostProcessingConfig &config)
 void VulkanRenderer::togglePostProcessing() { impl->togglePostProcessing(); }
 
 void VulkanRenderer::init(Window &targetWindow, const ShaderScene &scene,
-                          const WindowConfig &) {
+                          const WindowConfig &windowConfig) {
   impl->vertexGlslPath = scene.vertexShader;
   impl->fragmentGlslPath = scene.fragmentShader;
+  impl->vsyncEnabled = windowConfig.vsync;
   impl->init(targetWindow);
   std::cout << "[shader] Active scene pipeline ready: " << scene.name << " ("
             << (impl->shaderRuntimeCompile ? "runtime-compiled GLSL"
                                            : "offline SPIR-V")
             << ")" << std::endl;
+}
+
+uint64_t VulkanRenderer::validationErrorCount() {
+  return gValidationErrorCount.load();
+}
+
+uint64_t VulkanRenderer::validationWarningCount() {
+  return gValidationWarningCount.load();
 }
 
 void VulkanRenderer::beginFrame(const FrameParams &params) {

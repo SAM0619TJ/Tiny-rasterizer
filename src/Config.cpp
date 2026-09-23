@@ -2,6 +2,19 @@
 #include <iostream>
 #include <stdexcept>
 
+namespace {
+
+TextureSource parseTextureSource(const std::string& value) {
+    if (value == "file") return TextureSource::File;
+    if (value == "compute") return TextureSource::Compute;
+    if (value == "procedural") return TextureSource::Procedural;
+    std::cerr << "Warning: Unknown post_processing.texture_source '" << value
+              << "', falling back to 'file'" << std::endl;
+    return TextureSource::File;
+}
+
+} // namespace
+
 Config::Config() {
     // 默认配置
     activeScene = "rotation_matrix";
@@ -48,9 +61,9 @@ bool Config::load(const std::string& configPath) {
         
         loadWindowConfig(config);
         loadPerformanceConfig(config);
-        loadGPUConfig(config);
         loadShaderConfig(config);
         loadPostProcessingConfig(config);
+        loadComputeConfig(config);
         
         std::cout << "Config loaded successfully from: " << configPath << std::endl;
         std::cout << "Active scene: " << activeScene;
@@ -119,17 +132,6 @@ void Config::loadPerformanceConfig(const YAML::Node& config) {
         perfConfig.showTitleFps = perf["show_title_fps"].as<bool>();
 }
 
-void Config::loadGPUConfig(const YAML::Node& config) {
-    if (!config["gpu"]) {
-        return;
-    }
-    
-    const YAML::Node& gpu = config["gpu"];
-    if (gpu["opengl_major"]) gpuConfig.openglMajor = gpu["opengl_major"].as<int>();
-    if (gpu["opengl_minor"]) gpuConfig.openglMinor = gpu["opengl_minor"].as<int>();
-    if (gpu["samples"]) gpuConfig.samples = gpu["samples"].as<int>();
-}
-
 void Config::loadShaderConfig(const YAML::Node& config) {
     if (!config["shader"]) {
         return;
@@ -154,6 +156,25 @@ void Config::loadPostProcessingConfig(const YAML::Node& config) {
     if (post["exposure"]) postConfig.exposure = post["exposure"].as<float>();
     if (post["vignette"]) postConfig.vignette = post["vignette"].as<float>();
     if (post["grain"]) postConfig.grain = post["grain"].as<float>();
+    if (post["texture"] && post["texture"].IsScalar())
+        postConfig.texturePath = post["texture"].as<std::string>();
+    if (post["texture_source"])
+        postConfig.textureSource = parseTextureSource(
+            post["texture_source"].as<std::string>());
+}
+
+void Config::loadComputeConfig(const YAML::Node& config) {
+    if (!config["compute"]) {
+        return;
+    }
+
+    const YAML::Node& compute = config["compute"];
+    if (compute["enabled"]) computeConfig.enabled = compute["enabled"].as<bool>();
+    if (compute["grain_shader"])
+        computeConfig.grainShader = compute["grain_shader"].as<std::string>();
+    if (compute["texture_size"])
+        computeConfig.textureSize = compute["texture_size"].as<int>();
+    if (compute["seed"]) computeConfig.seed = compute["seed"].as<int>();
 }
 
 ShaderScene Config::getActiveScene() const {

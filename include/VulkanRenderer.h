@@ -3,6 +3,7 @@
 
 #include "Renderer.h"
 
+#include <cstdint>
 #include <memory>
 
 class VulkanRenderer : public Renderer {
@@ -10,8 +11,12 @@ public:
   VulkanRenderer();
   ~VulkanRenderer() override;
 
-  static void configureWindowHints();
+  static void configureWindowHints(bool hideWindow = false);
   static void runHeadlessSmokeTest();
+
+  // Phase 3 验收：自进程启动以来验证层累计的 error/warning 数量。
+  static uint64_t validationErrorCount();
+  static uint64_t validationWarningCount();
 
   // 着色器加载选项（运行时编译/热重载/离线 SPIR-V 目录），需在 init 前调用。
   void setShaderOptions(bool runtimeCompile, bool hotReload,
@@ -22,6 +27,8 @@ public:
   void pollShaderReload();
   // 后处理参数（需在 init 前调用）。
   void setPostProcessingConfig(const PostProcessingConfig &config);
+  // Phase 7：compute 配置（需在 init 前调用）。
+  void setComputeConfig(const ComputeConfig &config);
   // 运行时切换后处理开关（对应 composite 中 enabled 参数）。
   void togglePostProcessing();
 

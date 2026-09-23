@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-enum class ShaderStage { Vertex, Fragment };
+enum class ShaderStage { Vertex, Fragment, Compute };
 
 // 负责把场景的 GLSL 路径解析为 VkShaderModule：
 //   - 离线模式：读取构建期生成的 shaders_spirv/<stem>.spv

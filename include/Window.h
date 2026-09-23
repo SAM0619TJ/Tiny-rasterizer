@@ -31,6 +31,9 @@ public:
   // 设置窗口标题
   void setTitle(const std::string &title);
 
+  // 调整窗口尺寸（触发 framebuffer 变化，用于 resize 稳定性验收）
+  void setWindowSize(int width, int height);
+
   // 静态方法
   static void initGLFW();
   static void terminateGLFW();
