@@ -20,11 +20,22 @@ if [ $# -eq 0 ]; then
 fi
 
 SCENE=$1
-CONFIG_FILE="build/config/shader_config.yaml"
 
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "错误: 配置文件不存在，请先编译项目"
-    echo "运行: cd build && cmake .. && make"
+# 依次尝试 preset 构建目录与默认构建目录
+CONFIG_FILE=""
+for candidate in \
+    "build/macos-debug/config/shader_config.yaml" \
+    "build/windows-debug/config/shader_config.yaml" \
+    "build/config/shader_config.yaml"; do
+    if [ -f "$candidate" ]; then
+        CONFIG_FILE="$candidate"
+        break
+    fi
+done
+
+if [ -z "$CONFIG_FILE" ]; then
+    echo "错误: 未找到构建目录中的 shader_config.yaml，请先编译项目"
+    echo "运行: cmake --preset macos-debug && cmake --build --preset macos-debug"
     exit 1
 fi
 
@@ -57,5 +68,7 @@ fi
 
 echo "✓ 场景已切换到: $DISPLAY_NAME"
 echo ""
+echo "配置文件: $CONFIG_FILE"
 echo "运行程序:"
-echo "  cd build && ./Tiny-rasterizer"
+echo "  ./${CONFIG_FILE%/config/shader_config.yaml}/Tiny-rasterizer"
+echo "（也可以直接运行程序后用数字键 1..3 切换场景）"
