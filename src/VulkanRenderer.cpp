@@ -4,11 +4,11 @@
 
 #include "ShaderManager.h"
 #include "Window.h"
-
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -42,10 +42,19 @@ void checkVk(VkResult result, const std::string &message) {
   }
 }
 
+// Phase 3 验收指标：验证层消息累计计数，供 CI/脚本判定“无 validation error”。
+std::atomic<uint64_t> gValidationErrorCount{0};
+std::atomic<uint64_t> gValidationWarningCount{0};
+
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT,
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT,
     const VkDebugUtilsMessengerCallbackDataEXT *callbackData, void *) {
+  if ((severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0) {
+    ++gValidationErrorCount;
+  } else {
+    ++gValidationWarningCount;
+  }
   std::cerr << "[vulkan][validation] " << callbackData->pMessage << std::endl;
   return VK_FALSE;
 }
@@ -242,14 +251,50 @@ VkSurfaceFormatKHR chooseSurfaceFormat(
   return formats.front();
 }
 
+const char *presentModeName(VkPresentModeKHR mode) {
+  switch (mode) {
+  case VK_PRESENT_MODE_IMMEDIATE_KHR:
+    return "IMMEDIATE";
+  case VK_PRESENT_MODE_MAILBOX_KHR:
+    return "MAILBOX";
+  case VK_PRESENT_MODE_FIFO_KHR:
+    return "FIFO";
+  case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+    return "FIFO_RELAXED";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+// vsync 开 -> FIFO（规范要求必定支持）；vsync 关 -> 优先 MAILBOX（低延迟不撕烈）。
 VkPresentModeKHR choosePresentMode(
-    const std::vector<VkPresentModeKHR> &presentModes) {
-  for (VkPresentModeKHR mode : presentModes) {
-    if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
-      return mode;
+    const std::vector<VkPresentModeKHR> &presentModes, bool vsync) {
+  const auto supports = [&presentModes](VkPresentModeKHR mode) {
+    return std::find(presentModes.begin(), presentModes.end(), mode) !=
+           presentModes.end();
+  };
+
+  if (vsync) {
+    if (supports(VK_PRESENT_MODE_FIFO_KHR)) {
+      return VK_PRESENT_MODE_FIFO_KHR;
+    }
+    if (supports(VK_PRESENT_MODE_FIFO_RELAXED_KHR)) {
+      return VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    }
+  } else {
+    if (supports(VK_PRESENT_MODE_MAILBOX_KHR)) {
+      return VK_PRESENT_MODE_MAILBOX_KHR;
+    }
+    if (supports(VK_PRESENT_MODE_IMMEDIATE_KHR)) {
+      return VK_PRESENT_MODE_IMMEDIATE_KHR;
     }
   }
-  return VK_PRESENT_MODE_FIFO_KHR;
+
+  if (supports(VK_PRESENT_MODE_FIFO_KHR)) {
+    return VK_PRESENT_MODE_FIFO_KHR;
+  }
+  return presentModes.empty() ? VK_PRESENT_MODE_FIFO_KHR
+                             : presentModes.front();
 }
 
 VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR &capabilities,
@@ -301,6 +346,23 @@ constexpr const char *kCompositeFragmentGlsl = "shaders/composite.glsl";
 const std::array<float, 12> kFullscreenQuad = {
     -1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f,
     -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
+
+// 选择实例 API 版本：至少 1.1。
+// 1.1 起 VK_KHR_get_physical_device_properties2 提升为核心，可满足
+// VK_KHR_portability_subset 的依赖要求（VUID-vkCreateDevice-ppEnabledExtensionNames-01387）。
+uint32_t resolveInstanceApiVersion() {
+  auto enumerateVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+      vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"));
+  if (enumerateVersion == nullptr) {
+    return VK_API_VERSION_1_0;
+  }
+
+  uint32_t supported = VK_API_VERSION_1_0;
+  if (enumerateVersion(&supported) != VK_SUCCESS) {
+    return VK_API_VERSION_1_0;
+  }
+  return std::min(supported, static_cast<uint32_t>(VK_API_VERSION_1_1));
+}
 
 std::vector<const char *>
 buildDeviceExtensions(VkPhysicalDevice device) {
@@ -390,6 +452,7 @@ struct VulkanRenderer::Impl {
   bool frameReady = false;
   bool framebufferResized = false;
   bool validationEnabled = false;
+  bool vsyncEnabled = false;
 
   void init(Window &targetWindow) {
     window = &targetWindow;
@@ -560,6 +623,11 @@ struct VulkanRenderer::Impl {
     if (!initialized || width <= 0 || height <= 0) {
       return;
     }
+    // 尺寸未变时不重建交换链（避免启动后首帧的无意义重建）。
+    if (width == static_cast<int>(swapchainExtent.width) &&
+        height == static_cast<int>(swapchainExtent.height)) {
+      return;
+    }
     framebufferResized = true;
   }
 
@@ -659,6 +727,11 @@ struct VulkanRenderer::Impl {
       vkDestroyInstance(instance, nullptr);
     }
 
+    std::cout << "[vulkan] Validation summary: errors=" << gValidationErrorCount
+              << " warnings=" << gValidationWarningCount
+              << (validationEnabled ? " (layers enabled)" : " (layers off)")
+              << std::endl;
+
     *this = Impl{};
   }
 
@@ -679,7 +752,7 @@ struct VulkanRenderer::Impl {
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Tiny Rasterizer";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_0;
+    appInfo.apiVersion = resolveInstanceApiVersion();
 
     uint32_t glfwExtensionCount = 0;
     const char **glfwExtensions =
@@ -832,7 +905,8 @@ struct VulkanRenderer::Impl {
     const SwapchainSupport support =
         querySwapchainSupport(physicalDevice, surface);
     const VkSurfaceFormatKHR surfaceFormat = chooseSurfaceFormat(support.formats);
-    const VkPresentModeKHR presentMode = choosePresentMode(support.presentModes);
+    const VkPresentModeKHR presentMode =
+        choosePresentMode(support.presentModes, vsyncEnabled);
     const VkExtent2D extent =
         chooseExtent(support.capabilities, window->getGLFWwindow());
 
@@ -880,7 +954,9 @@ struct VulkanRenderer::Impl {
     swapchainImageFormat = surfaceFormat.format;
     swapchainExtent = extent;
     std::cout << "[vulkan] Swapchain created: " << swapchainExtent.width << "x"
-              << swapchainExtent.height << std::endl;
+              << swapchainExtent.height << " | present="
+              << presentModeName(presentMode)
+              << " | vsync=" << (vsyncEnabled ? "on" : "off") << std::endl;
   }
 
   void createImageViews() {
@@ -1897,7 +1973,7 @@ void VulkanRenderer::runHeadlessSmokeTest() {
   appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
   appInfo.pEngineName = "Tiny Rasterizer";
   appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-  appInfo.apiVersion = VK_API_VERSION_1_0;
+  appInfo.apiVersion = resolveInstanceApiVersion();
 
   std::vector<const char *> instanceExtensions;
   bool portabilityEnumerationEnabled = false;
@@ -2004,14 +2080,23 @@ void VulkanRenderer::setPostProcessingConfig(const PostProcessingConfig &config)
 void VulkanRenderer::togglePostProcessing() { impl->togglePostProcessing(); }
 
 void VulkanRenderer::init(Window &targetWindow, const ShaderScene &scene,
-                          const WindowConfig &) {
+                          const WindowConfig &windowConfig) {
   impl->vertexGlslPath = scene.vertexShader;
   impl->fragmentGlslPath = scene.fragmentShader;
+  impl->vsyncEnabled = windowConfig.vsync;
   impl->init(targetWindow);
   std::cout << "[shader] Active scene pipeline ready: " << scene.name << " ("
             << (impl->shaderRuntimeCompile ? "runtime-compiled GLSL"
                                            : "offline SPIR-V")
             << ")" << std::endl;
+}
+
+uint64_t VulkanRenderer::validationErrorCount() {
+  return gValidationErrorCount.load();
+}
+
+uint64_t VulkanRenderer::validationWarningCount() {
+  return gValidationWarningCount.load();
 }
 
 void VulkanRenderer::beginFrame(const FrameParams &params) {

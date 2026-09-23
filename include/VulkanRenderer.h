@@ -3,6 +3,7 @@
 
 #include "Renderer.h"
 
+#include <cstdint>
 #include <memory>
 
 class VulkanRenderer : public Renderer {
@@ -12,6 +13,10 @@ public:
 
   static void configureWindowHints();
   static void runHeadlessSmokeTest();
+
+  // Phase 3 验收：自进程启动以来验证层累计的 error/warning 数量。
+  static uint64_t validationErrorCount();
+  static uint64_t validationWarningCount();
 
   // 着色器加载选项（运行时编译/热重载/离线 SPIR-V 目录），需在 init 前调用。
   void setShaderOptions(bool runtimeCompile, bool hotReload,

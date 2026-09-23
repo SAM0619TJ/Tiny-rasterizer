@@ -49,6 +49,23 @@ int readMaxFrames() {
 
 bool isHeadlessTestRun() {
   return std::getenv("TINY_RASTERIZER_HEADLESS_TEST") != nullptr;
+void printAcceptanceBaseline(double startupMs, double lifetimeSeconds,
+                             int totalFrames, double averageFrameMs,
+                             double worstFrameMs, int resizeCount) {
+  std::cout << "\n=== 验收基线 ===" << std::endl;
+  std::cout << "启动耗时: " << std::fixed << std::setprecision(1) << startupMs
+            << " ms" << std::endl;
+  std::cout << "运行时长: " << std::setprecision(2) << lifetimeSeconds << " s"
+            << std::endl;
+  std::cout << "总帧数: " << totalFrames << std::endl;
+  std::cout << "平均帧时: " << std::setprecision(3) << averageFrameMs
+            << " ms" << std::endl;
+  std::cout << "最差帧时: " << worstFrameMs << " ms" << std::endl;
+  std::cout << "resize 次数: " << resizeCount << std::endl;
+  std::cout << "validation: errors=" << VulkanRenderer::validationErrorCount()
+            << " warnings=" << VulkanRenderer::validationWarningCount()
+            << std::endl;
+  std::cout << "================\n" << std::endl;
 }
 
 int runApplication() {
@@ -77,6 +94,7 @@ int runApplication() {
                               shaderConfig.hotReload, shaderConfig.spirvDir);
     renderer.setPostProcessingConfig(postConfig);
     renderer.init(window, activeScene, windowConfig);
+    const double startupMs = (Window::getTime() - startupBeginTime) * 1000.0;
 
     // 收集场景列表，支持运行时用数字键 1..N 切换
     std::vector<std::pair<std::string, ShaderScene>> sceneList;
@@ -114,6 +132,8 @@ int runApplication() {
     double maxFrameTime = 0.0;
     int lastWidth = 0;
     int lastHeight = 0;
+    int resizeCount = 0;
+    double totalFrameTimeMs = 0.0;
 
     while (!window.shouldClose()) {
       const double currentFrameTime = Window::getTime();
@@ -121,6 +141,7 @@ int runApplication() {
       lastFrameTime = currentFrameTime;
       minFrameTime = std::min(minFrameTime, frameDelta);
       maxFrameTime = std::max(maxFrameTime, frameDelta);
+      totalFrameTimeMs += frameDelta * 1000.0;
 
       int width = 0;
       int height = 0;
@@ -129,6 +150,7 @@ int runApplication() {
         renderer.resize(width, height);
         lastWidth = width;
         lastHeight = height;
+        ++resizeCount;
       }
 
       for (size_t i = 0; i < sceneList.size() && i < 9; ++i) {
@@ -194,6 +216,24 @@ int runApplication() {
     }
 
     renderer.shutdown();
+
+    const double lifetimeSeconds = lastFrameTime - startupBeginTime;
+    const double averageFrameMs =
+        totalFrameCount > 0 ? totalFrameTimeMs / totalFrameCount : 0.0;
+    printAcceptanceBaseline(startupMs, lifetimeSeconds, totalFrameCount,
+                            averageFrameMs, maxFrameTime * 1000.0, resizeCount);
+    if (options.stressTest) {
+      std::cout << "[stress] 后处理切换次数: " << stress.postToggleCount()
+                << std::endl;
+    }
+  }
+
+  if (options.strictValidation && VulkanRenderer::validationErrorCount() > 0) {
+    std::cerr << "[validation] 严格模式失败: 检测到 "
+              << VulkanRenderer::validationErrorCount() << " 个 validation error"
+              << std::endl;
+    Window::terminateGLFW();
+    return 2;
   }
 
   Window::terminateGLFW();
