@@ -1,5 +1,18 @@
 # Debugging Information
 
+## 2026-09-23
+
+按 README 的 Phase 推进，新增验收门后立即暴露的问题：
+
+- **VUID-vkCreateDevice-ppEnabledExtensionNames-01387**：启用 `VK_KHR_portability_subset` 时
+  未同时启用 `VK_KHR_get_physical_device_properties2`。原因是实例 API 版本请求 1.0，
+  该扩展未提升为核心；MoltenVK 也不把它列为设备扩展，因此原来的 `hasDeviceExtension` 判断失效。
+  修复：用 `vkEnumerateInstanceVersion` 探测后请求 1.1（上限 1.1），使该功能由核心提供。
+  顺带消除了 MoltenVK 的 `vkGetPhysicalDeviceProperties2KHR: Emulation found unrecognized structure type` 警告。
+- **启动首帧多余重建交换链**：主循环的 `lastWidth/lastHeight` 初值为 0，首帧必然触发一次
+  `resize()` → `recreateSwapchain()`。修复：`resize()` 在尺寸与当前 extent 相同时直接返回。
+- 结论：把「验证层 error 计数 + 严格退出码」做成常规验收门，比人工看日志有效得多。
+
 ## 2025-11-07
 
 bug修复和调试信息：

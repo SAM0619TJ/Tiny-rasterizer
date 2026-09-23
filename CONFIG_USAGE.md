@@ -1,265 +1,172 @@
-# YAML 配置系统使用指南
+# 配置系统使用指南（Vulkan 后端）
 
-## ✅ 已实现功能
+配置文件位置：`config/shader_config.yaml`（可用命令行参数覆盖：`./Tiny-rasterizer <path>`）。
 
-项目现在支持通过 YAML 配置文件管理所有关键设置，包括：
+## 配置项总览
 
-- ✅ Shader 路径配置
-- ✅ 多场景切换
-- ✅ 窗口设置
-- ✅ 性能选项
-- ✅ GPU 配置
-
-## 📁 配置文件结构
-
-配置文件位置：`config/shader_config.yaml`
+| 配置段 | 作用 | 相关阶段 |
+| --- | --- | --- |
+| `active_scene` / `scenes` | 场景与着色器路径 | Phase 5 |
+| `window` | 窗口尺寸、标题、vsync（映射到 present mode） | Phase 3 |
+| `performance` | FPS 输出频率与显示位置 | Phase 0 |
+| `shader` | GLSL/SPIR-V 双路径与热重载 | Phase 5 |
+| `post_processing` | 离屏合成效果与颗粒纹理来源 | Phase 6 |
+| `compute` | 是否用 compute 生成噪声纹理 | Phase 7 |
 
 ### 1. 场景切换
 
 ```yaml
-# 当前激活的着色器场景
-active_scene: "rotation_matrix"  # 可改为: "fractal", "water"
+active_scene: "rotation_matrix"  # 可用 key 或场景 name，也可为 "fractal" / "water"
 
-# 着色器场景配置
 scenes:
   rotation_matrix:
     name: "Rotation Matrix Effect"
     description: "Box rotation with time-based animation"
     vertex_shader: "shaders/vertex.glsl"
     fragment_shader: "shaders/rotation_matrix.glsl"
-    
-  fractal:
-    name: "Fractal Raymarch"
-    description: "3D fractal raymarching effect"
-    vertex_shader: "shaders/vertex.glsl"
-    fragment_shader: "shaders/fragment.glsl"
 ```
 
-**切换场景**：修改 `active_scene` 的值即可
+运行时可直接用数字键 `1..N` 切换场景（会重建图形管线），按 `P` 切换后处理开关。
 
-### 2. 窗口配置
+### 2. 窗口与垂直同步
 
 ```yaml
 window:
-  width: 1000      # 窗口宽度
-  height: 600      # 窗口高度
-  title: "Tiny Rasterizer"  # 窗口标题
-  vsync: false     # true=锁定60fps, false=最大性能
-```
-
-### 3. 性能配置
-
-```yaml
-performance:
-  fps_update_interval: 0.5  # FPS更新间隔(秒)
-  show_console_fps: true    # 在终端显示FPS
-  show_title_fps: true      # 在窗口标题显示FPS
-```
-
-### 4. GPU 配置
-
-```yaml
-gpu:
-  opengl_major: 4   # OpenGL 主版本号
-  opengl_minor: 1   # OpenGL 次版本号
-  samples: 0        # MSAA采样数，0=禁用，4/8/16=启用
-```
-
-## 🚀 使用方法
-
-### 方式1：修改配置文件
-
-1. 编辑 `config/shader_config.yaml`
-2. 修改你想要的设置
-3. 重新运行程序
-
-```bash
-cd build
-./Tiny-rasterizer
-```
-
-### 方式2：添加新场景
-
-在 `shader_config.yaml` 中添加新场景：
-
-```yaml
-scenes:
-  my_new_scene:
-    name: "My Custom Effect"
-    description: "My awesome shader"
-    vertex_shader: "shaders/vertex.glsl"
-    fragment_shader: "shaders/my_shader.glsl"
-```
-
-然后设置为激活场景：
-
-```yaml
-active_scene: "my_new_scene"
-```
-
-## 📝 配置示例
-
-### 示例1：高性能模式
-
-```yaml
-window:
-  width: 1920
-  height: 1080
-  vsync: false  # 关闭VSync获得最大FPS
-
-performance:
-  fps_update_interval: 0.2  # 更频繁地更新FPS
-  show_console_fps: false   # 减少终端输出
-  show_title_fps: true
-
-gpu:
-  samples: 0  # 禁用MSAA提升性能
-```
-
-### 示例2：质量优先模式
-
-```yaml
-window:
-  width: 1920
-  height: 1080
-  vsync: true  # 启用VSync防止撕裂
-
-gpu:
-  samples: 4  # 4x MSAA抗锯齿
-```
-
-### 示例3：调试模式
-
-```yaml
-window:
-  width: 800
+  width: 1000
   height: 600
+  title: "Tiny Rasterizer"
+  vsync: false     # false -> 优先 MAILBOX（低延迟），true -> FIFO（锁刷新率）
+```
+
+`vsync` 现在真正生效：它决定 `VkPresentModeKHR` 的选择顺序，实际选中的模式会打印在启动日志里。
+
+### 3. 性能输出
+
+```yaml
+performance:
+  fps_update_interval: 0.5  # 统计输出间隔（秒）
+  show_console_fps: true
+  show_title_fps: true
+```
+
+程序退出时会输出验收基线：启动耗时、总帧数、平均/最差帧时、resize 次数、validation error/warning 计数。
+
+### 4. 着色器加载（双路径 + 热重载）
+
+```yaml
+shader:
+  runtime_compile: false       # true=运行时用 glslc 编译 GLSL，false=加载离线 SPIR-V
+  hot_reload: false            # true=源文件变化后自动重建管线
+  spirv_dir: "shaders_spirv"   # 离线 SPIR-V 目录（相对可执行文件）
+```
+
+- 离线模式：构建期由 `glslc` 生成 `shaders_spirv/<stem>.spv`。
+- 运行时模式：`ShaderManager` 调用 `glslc` 产出 `<stem>.dev.spv`，失败自动回退离线 SPIR-V。
+
+### 5. 后处理（离屏 + 全屏合成）
+
+```yaml
+post_processing:
+  enabled: true     # false 时合成 pass 直通
+  exposure: 1.05
+  vignette: 0.35
+  grain: 0.05
+  texture_source: "file"          # file | compute | procedural
+  texture: "textures/grain.ppm"   # texture_source=file 时使用
+```
+
+颗粒纹理来源由 `texture_source` 显式指定，没有隐式优先级：
+
+| 取值 | 含义 | 不可用时的行为 |
+| --- | --- | --- |
+| `file` | 从 `texture` 指定的 PPM(P3/P6)/TGA(2/3/10/11) 加载 | 加载失败告警并降级到程序化噪声 |
+| `compute` | 用 `shaders/grain.glsl` 在 GPU 生成 | `compute.enabled=false` 或设备无同族 compute 队列时降级 |
+| `procedural` | CPU 端 `makeNoise()` 生成 | 不依赖外部资源 |
+
+### 6. Compute（Phase 7）
+
+```yaml
+compute:
+  enabled: true
+  grain_shader: "shaders/grain.glsl"
+  texture_size: 256
+  seed: 1
+```
+
+`texture_source: compute` 与本段的 `enabled` 同时满足时才对 dispatch；否则按上表降级并打印告警。
+
+## 使用示例
+
+### 示例 1：最大性能（关垂直同步、关后处理）
+
+```yaml
+window:
+  width: 1600
+  height: 900
   vsync: false
 
 performance:
-  fps_update_interval: 0.1  # 快速更新
-  show_console_fps: true    # 显示详细信息
-  show_title_fps: true
+  fps_update_interval: 0.2
+  show_console_fps: true
+
+post_processing:
+  enabled: false
 ```
 
-## 🔧 代码使用
+### 示例 2：效果演示（曝光 + 暗角 + 颗粒，纹理走 Compute）
 
-如果你想在代码中使用配置：
+```yaml
+window:
+  vsync: true
+
+post_processing:
+  enabled: true
+  exposure: 1.1
+  vignette: 0.4
+  grain: 0.08
+  texture_source: "compute"
+
+compute:
+  enabled: true
+  texture_size: 512
+```
+
+### 示例 3：着色器迭代（运行时编译 + 热重载）
+
+```yaml
+shader:
+  runtime_compile: true
+  hot_reload: true
+```
+
+## 命令行与入口选项
+
+所有 argv/环境变量都在 `include/AppOptions.h` 里解析，渲染器只读配置，不感知测试模式。
+
+```bash
+./Tiny-rasterizer [config-path]                          # 指定配置文件
+
+# 环境变量（自动化验收用）
+TINY_RASTERIZER_MAX_FRAMES=180          # 跑固定帧数后退出（超过 0 时窗口自动隐藏）
+TINY_RASTERIZER_HEADLESS_TEST=1         # 仅初始化核心对象，不创建窗口
+TINY_RASTERIZER_STRESS_TEST=1           # 自动 resize + 切换后处理/场景
+TINY_RASTERIZER_STRICT_VALIDATION=1     # 有 validation error 时以退出码 2 结束
+TINY_RASTERIZER_FORCE_COMPUTE_TEXTURE=1 # 把 texture_source 覆盖为 compute
+```
+
+`FORCE_COMPUTE_TEXTURE` 的语义是“投影到配置层”：它等价于在 yaml 里写
+`texture_source: "compute"` 且 `compute.enabled: true`，不会在渲染器里引入测试分支。
+
+## 代码中使用配置
 
 ```cpp
 #include "Config.h"
 
-// 加载配置
 Config config("config/shader_config.yaml");
 
-// 获取配置
-auto windowConfig = config.getWindowConfig();
-auto perfConfig = config.getPerformanceConfig();
-auto gpuConfig = config.getGPUConfig();
-
-// 获取当前场景
-ShaderScene scene = config.getActiveScene();
-std::cout << "Vertex shader: " << scene.vertexShader << std::endl;
-std::cout << "Fragment shader: " << scene.fragmentShader << std::endl;
-
-// 切换场景（运行时）
-config.setActiveScene("fractal");
+const WindowConfig &window = config.getWindowConfig();
+const ShaderConfig &shader = config.getShaderConfig();
+const PostProcessingConfig &post = config.getPostProcessingConfig();
+const ComputeConfig &compute = config.getComputeConfig();
+const ShaderScene scene = config.getActiveScene();
 ```
-
-## 📋 可用场景列表
-
-当前配置的场景：
-
-| 场景名 | 描述 | Fragment Shader |
-|--------|------|----------------|
-| rotation_matrix | 旋转矩阵盒子动画 | rotation_matrix.glsl |
-| fractal | 3D分形光线追踪 | fragment.glsl |
-| water | 水面模拟效果 | water.glsl |
-
-## 🎯 最佳实践
-
-1. **性能测试**：先用 `vsync: false` 测试最大性能
-2. **正常使用**：使用 `vsync: true` 获得稳定体验
-3. **调试**：启用 `show_console_fps` 查看详细信息
-4. **发布**：禁用 `show_console_fps` 减少输出
-
-## 🐛 故障排除
-
-### 配置文件未找到
-
-确保配置文件在正确位置：
-```bash
-ls build/config/shader_config.yaml
-```
-
-如果不存在，重新编译：
-```bash
-cd build && make
-```
-
-### Shader 未找到
-
-确保 shader 路径正确：
-- 路径相对于可执行文件目录
-- 使用 `shaders/` 前缀
-- 检查文件是否存在：`ls build/shaders/`
-
-### YAML 解析错误
-
-检查 YAML 语法：
-- 使用空格缩进（不要用Tab）
-- 确保冒号后有空格
-- 字符串可以加引号或不加
-
-## 📚 技术细节
-
-### 依赖库
-
-- **yaml-cpp**: YAML 解析库
-  - 包: `libyaml-cpp-dev`
-  - 安装: `sudo apt install libyaml-cpp-dev`
-
-### 文件结构
-
-```
-Tiny-rasterizer/
-├── config/
-│   └── shader_config.yaml    # 主配置文件
-├── include/
-│   └── Config.h              # 配置类头文件
-├── src/
-│   ├── Config.cpp            # 配置类实现
-│   └── main.cpp              # 使用配置
-└── CMakeLists.txt            # 链接 yaml-cpp
-```
-
-### CMake 配置
-
-在 `CMakeLists.txt` 中：
-```cmake
-find_package(yaml-cpp REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE yaml-cpp)
-```
-
-## 🎨 快速开始
-
-1. **查看当前配置**:
-   ```bash
-   cat config/shader_config.yaml
-   ```
-
-2. **切换到分形场景**:
-   编辑 `config/shader_config.yaml`，修改:
-   ```yaml
-   active_scene: "fractal"
-   ```
-
-3. **运行程序**:
-   ```bash
-   cd build && ./Tiny-rasterizer
-   ```
-
-4. **调整窗口大小**:
-   修改配置文件中的 `width` 和 `height`
-
-就这么简单！🎉
